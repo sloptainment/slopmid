@@ -1,11 +1,11 @@
 ## Sheet: left-click adds a note or drags it, its right end resizes it,
 ## right-click deletes. Note names: click to audition. Velocity lane: drag.
 ## Select tool (corner buttons): drag a box to select (in the Vol/Exp lane: curve points; Shift adds), drag a selected note to move them all, Delete removes them; Ctrl+A selects all (or deselects, if anything is selected), Ctrl+D duplicates the selection after its last note, Ctrl+Q quantizes the selection's starts and ends to the snap.
-## Ctrl+C copies the selection, Ctrl+V pastes it as a group at the playhead set on the ruler, rounded to the snap.
+## Ctrl+C copies the selection, Ctrl+V pastes it as a group at the playhead set on the ruler, rounded to the snap. In the Vol/Exp/Pan lane they copy and paste curve points, replacing the points the pasted span covers.
 ## Bend tool (corner buttons): every note shows its pitch bend as a line between points, the first at its start and the last at its end (pinned in time). Drag a point (up/down is semitones from the note, continuous), click the line or a note to add one at the snap, right-drag a middle point to delete it, Ctrl+click puts a point on the note's own pitch. Selection as in Select, built in: click, Shift+click, drag a box, Delete, Ctrl+A. Notes themselves are untouched.
 ## Wheel scrolls pitch, Shift+wheel scrolls time, middle-drag pans, Ctrl+middle-drag zooms. Space plays/pauses.
 
-import std/[locks, math, os, sequtils, strformat, strutils]
+import std/[algorithm, locks, math, os, sequtils, strformat, strutils]
 import imgui
 import wrap/[alsa, gui, slopgs]
 import roll, gm
@@ -139,6 +139,7 @@ var
   pOrig: seq[Placement] # the placements when the drag began; a blocked drop goes back to them
   pBlocked: bool # the drag now would overlap placements in a lane
   noteClip: seq[Note] # Ctrl+C in the piano roll
+  ccClip: seq[tuple[t, v: int, sel: bool]] # Ctrl+C in a Vol/Exp/Pan lane
   placeClip: seq[Placement] # Ctrl+C in the song window
 
 type Cmd = enum
@@ -440,11 +441,11 @@ proc pianoRoll() =
         var m = n
         m.start += at - first
         cur().notes.add m
-  if notesOk and fired("Piano roll", Copy, ImGuiKey.C):
+  if notesOk and velMode == 0 and fired("Piano roll", Copy, ImGuiKey.C):
     let sel = cur().notes.filterIt(it.sel)
     if sel.len > 0:
       noteClip = sel
-  if notesOk and fired("Piano roll", Paste, ImGuiKey.V) and focusTrack >= 0 and noteClip.len > 0:
+  if notesOk and velMode == 0 and fired("Piano roll", Paste, ImGuiKey.V) and focusTrack >= 0 and noteClip.len > 0:
     let d = snap(clipPos().int, grid) - noteClip.mapIt(it.start).min # the group's first note lands on the playhead
     for n in cur().notes.mitems:
       n.sel = false
@@ -798,6 +799,16 @@ proc pianoRoll() =
         p.sel = all
     if fired("Piano roll", Delete, ImGuiKey.Delete, ctrl = false):
       pts.keepItIf(not it.sel)
+    if fired("Piano roll", Copy, ImGuiKey.C) and pts.anyIt(it.sel):
+      ccClip = pts.filterIt(it.sel)
+    if fired("Piano roll", Paste, ImGuiKey.V) and ccClip.len > 0:
+      let d = snap(clipPos().int, grid) - ccClip[0].t # the first point lands on the playhead
+      let moved = ccClip.mapIt((t: it.t + d, v: it.v, sel: true)).filterIt(it.t <= loopT)
+      if moved.len > 0: # replaces the points the pasted span covers
+        pts.keepItIf(it.t < moved[0].t or it.t > moved[^1].t)
+        for p in pts.mitems:
+          p.sel = false
+        pts = (pts & moved).sortedByIt(it.t)
   if velMode > 0:
     if pts.len == 0: # the default, as a point at the start
       pts.add (0, CcDefault[velMode - 1], false)
