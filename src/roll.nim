@@ -8,8 +8,9 @@ const
   Drums* = 9 ## MIDI channel 10, where rhythm tracks go
   PreviewCh* = 15 ## key previews; their own synth, so the song may use it too
   Lanes* = 32 ## rows in the song window
-  DefaultVol* = 100 ## channel volume (CC 7) of a track with no volume points; the GM default
-  VolSteps* = [Ppq div 4, Ppq div 8, Ppq div 16] ## ticks between volume messages: 1/16, 1/32, 1/64
+  CcNum* = [7, 11] ## the curves: volume, expression
+  CcDefault* = [100, 127] ## a track's value with no points; the GM defaults
+  CcSteps* = [Ppq div 4, Ppq div 8, Ppq div 16] ## ticks between messages: 1/16, 1/32, 1/64
 
 type
   Note* = object
@@ -20,8 +21,8 @@ type
   Track* = object
     notes*: seq[Note]
     bank*, program*: int
-    vol*: seq[tuple[t, v: int]] ## volume points by tick, ramped between; held outside the first and last
-    volRes*: int ## index into `VolSteps`
+    cc*: array[2, seq[tuple[t, v: int]]] ## per curve (`CcNum`): points by tick, ramped between; held outside the first and last
+    ccRes*: int ## index into `CcSteps`
     rhythm*: bool ## plays on the drum channel
     mute*, solo*: bool ## transient, cleared when the clip changes
 
@@ -38,8 +39,9 @@ type
     offset, src, track: int ## offset: frames into the block
     on: bool
     pitch, vel: int
-    cc: bool ## a volume message, not a note
-    vol: int ## the track's volume now: sent to the channel before a note, or by a `cc`
+    cc: bool ## a curve message, not a note
+    which: int ## the curve of a `cc`
+    vals: array[2, int] ## the track's curves now: sent to the channel before a note; a `cc` sends `vals[which]`
 
   Msg* = tuple[offset, status, d1, d2: int] ## a MIDI message, `offset` frames into the block
 
@@ -57,7 +59,7 @@ type
     idlePos*: float ## the other mode's playhead: song time in clip mode, clip time in song mode; swaps with `pos` on a mode change
     sounding: seq[tuple[src, track, pitch, ch: int]] ## src: index into the block's sources
     sent: array[16, int] ## bank * 128 + program + 1 last sent per channel, 0 = none
-    sentVol: array[16, int] ## volume + 1 last sent per channel, 0 = none
+    sentCc: array[2, array[16, int]] ## value + 1 last sent per curve and channel, 0 = none
 
 proc snap*(t, grid: int): int =
   ## `t` to the nearest multiple of `grid`.
@@ -73,17 +75,18 @@ proc loopEnd*(ts: seq[Track]): int =
     for n in t.notes:
       result = max(result, (n.start + n.len + BarTicks - 1) div BarTicks * BarTicks)
 
-proc volAt*(t: Track, tick: int): int =
-  ## The volume curve at `tick`.
-  if t.vol.len == 0:
-    return DefaultVol
-  for i, p in t.vol:
+proc ccAt*(t: Track, c, tick: int): int =
+  ## Curve `c` at `tick`.
+  let pts = t.cc[c]
+  if pts.len == 0:
+    return CcDefault[c]
+  for i, p in pts:
     if tick <= p.t:
       if i == 0:
         return p.v
-      let q = t.vol[i - 1]
+      let q = pts[i - 1]
       return q.v + int(round((p.v - q.v) * (tick - q.t) / (p.t - q.t)))
-  t.vol[^1].v
+  pts[^1].v
 
 proc audible(ts: seq[Track], i: int): bool =
   not ts[i].mute and (ts[i].solo or not ts.anyIt(it.solo))
@@ -184,13 +187,16 @@ proc advance*(s: var Song, frames, rate: int): seq[Msg] =
       for ti, t in tracks(si):
         if not tracks(si).audible(ti):
           continue
-        if t.vol.len > 0:
-          let step = VolSteps[t.volRes]
-          for k in ceil(lo / step.float).int ..< ceil(hi / step.float).int:
-            evs.add Ev(
-              offset: round(base + (float(k * step) - lo) * fpt).int,
-              src: si, track: ti, cc: true, vol: t.volAt(k * step),
-            )
+        for c in 0 .. 1:
+          if t.cc[c].len > 0:
+            let step = CcSteps[t.ccRes]
+            for k in ceil(lo / step.float).int ..< ceil(hi / step.float).int:
+              var vals: array[2, int]
+              vals[c] = t.ccAt(c, k * step)
+              evs.add Ev(
+                offset: round(base + (float(k * step) - lo) * fpt).int,
+                src: si, track: ti, cc: true, which: c, vals: vals,
+              )
         for n in t.notes:
           let (st, en) = (n.start.float, float(n.start + n.len))
           if st >= lo and st < hi:
@@ -201,7 +207,7 @@ proc advance*(s: var Song, frames, rate: int): seq[Msg] =
               on: true,
               pitch: n.pitch,
               vel: n.vel,
-              vol: t.volAt(n.start),
+              vals: [t.ccAt(0, n.start), t.ccAt(1, n.start)],
             )
           if en >= lo and en < hi:
             evs.add Ev(
@@ -227,9 +233,9 @@ proc advance*(s: var Song, frames, rate: int): seq[Msg] =
     if e.cc: # only a channel that sounds the track takes it
       for x in s.sounding:
         if x.src == e.src and x.track == e.track:
-          if s.sentVol[x.ch] != e.vol + 1:
-            s.sentVol[x.ch] = e.vol + 1
-            result.add (at, 0xB0 or x.ch, 7, e.vol)
+          if s.sentCc[e.which][x.ch] != e.vals[e.which] + 1:
+            s.sentCc[e.which][x.ch] = e.vals[e.which] + 1
+            result.add (at, 0xB0 or x.ch, CcNum[e.which], e.vals[e.which])
           break
       continue
     let i = s.soundIdx(e.src, e.track, e.pitch)
@@ -257,9 +263,10 @@ proc advance*(s: var Song, frames, rate: int): seq[Msg] =
         s.sent[ch] = want
         result.add (at, 0xB0 or ch, 0, tr.bank)
         result.add (at, 0xC0 or ch, tr.program, 0)
-      if s.sentVol[ch] != e.vol + 1:
-        s.sentVol[ch] = e.vol + 1
-        result.add (at, 0xB0 or ch, 7, e.vol)
+      for c in 0 .. 1:
+        if s.sentCc[c][ch] != e.vals[c] + 1:
+          s.sentCc[c][ch] = e.vals[c] + 1
+          result.add (at, 0xB0 or ch, CcNum[c], e.vals[c])
       result.add (at, 0x90 or ch, e.pitch, e.vel)
       s.sounding.add (e.src, e.track, e.pitch, ch)
 
@@ -327,10 +334,10 @@ when isMainModule:
   var all: seq[Msg]
   for blk in 0 ..< 50:
     all.add d.advance(1024, 22050)
-  doAssert all[0 ..< 8] ==
+  doAssert all[0 ..< 10] ==
     @[
-      (0, 0xB0, 0, 0).Msg, (0, 0xC0, 0, 0), (0, 0xB0, 7, DefaultVol), (0, 0x90, 60, 100),
-      (0, 0xB1, 0, 0), (0, 0xC1, 5, 0), (0, 0xB1, 7, DefaultVol), (0, 0x91, 62, 100),
+      (0, 0xB0, 0, 0).Msg, (0, 0xC0, 0, 0), (0, 0xB0, 7, CcDefault[0]), (0, 0xB0, 11, CcDefault[1]), (0, 0x90, 60, 100),
+      (0, 0xB1, 0, 0), (0, 0xC1, 5, 0), (0, 0xB1, 7, CcDefault[0]), (0, 0xB1, 11, CcDefault[1]), (0, 0x91, 62, 100),
     ], $all
   # tick 192 = frame 22050 = block 21, offset 546: channel 0 is free again, program 7
   doAssert (0xC0, 7) in all.mapIt((it.status, it.d1)) and
@@ -383,12 +390,19 @@ when isMainModule:
   let looped = g.play.filterIt(it[1].status shr 4 == 9).mapIt((it[0], it[1].offset))
   doAssert looped == @[(21, 546), (64, 614)], $looped
   # volume: ramps 0 -> 127 over the first beat, held after; one CC 7 per 1/16 (24 ticks)
-  let ramp = Track(vol: @[(0, 0), (96, 127)])
-  doAssert (ramp.volAt(0), ramp.volAt(48), ramp.volAt(96), ramp.volAt(500)) == (0, 64, 127, 127)
+  let ramp = Track(cc: [@[(0, 0), (96, 127)], @[]])
+  doAssert (ramp.ccAt(0, 0), ramp.ccAt(0, 48), ramp.ccAt(0, 96), ramp.ccAt(0, 500)) == (0, 64, 127, 127)
   var v = Song(bpm: 120, playing: true, clips: @[@[ramp]])
   v.nt = @[Note(start: 0, len: BarTicks, pitch: 60, vel: 100)]
   var vols: seq[int]
   for blk in 0 ..< 40: # before the loop seam at block 43
     vols.add v.advance(1024, 22050).filterIt(it.status == 0xB0 and it.d1 == 7).mapIt(it.d2)
   doAssert vols == @[0, 32, 64, 95, 127], $vols # steps at ticks 0, 24, 48, 72, 96; none after
+  # expression is its own curve on CC 11, independent of volume
+  v = Song(bpm: 120, playing: true, clips: @[@[Track(cc: [@[], @[(0, 127), (96, 0)]])]])
+  v.nt = @[Note(start: 0, len: BarTicks, pitch: 60, vel: 100)]
+  var exps: seq[int]
+  for blk in 0 ..< 40:
+    exps.add v.advance(1024, 22050).filterIt(it.status == 0xB0 and it.d1 == 11).mapIt(it.d2)
+  doAssert exps == @[127, 95, 63, 32, 0], $exps
   echo "roll: ok"

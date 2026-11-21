@@ -107,8 +107,8 @@ var
   keyH = 14f32 # zoom: pixels per pitch row
   scrollX = 0f32
   scrollY = float32(127 - 84) * keyH # C6 at the top
-  velMode = 0 # velocity lane's combo: Vel, Vol
-  volDrag = -1 # index of the volume point being dragged
+  velMode = 0 # velocity lane's combo: Vel, Vol, Exp; a curve's index in `Track.cc` is velMode - 1
+  volDrag = -1 # index of the curve point being dragged
   velFrac = 0.25f32 # share of the sheet+velocity height taken by the velocity lane
   sbGrab: ScrollGrab
   sbOff: float32
@@ -459,18 +459,18 @@ proc pianoRoll() =
 
   igSetCursorScreenPos(v2(origin.x + 2, velTop + 10))
   igSetNextItemWidth(KeyW - 4)
-  if igBeginCombo("##velMode", ["Vel", "Vol"][velMode]):
-    for i, name in ["Vel", "Vol"]:
+  if igBeginCombo("##velMode", ["Vel", "Vol", "Exp"][velMode]):
+    for i, name in ["Vel", "Vol", "Exp"]:
       if igSelectable(cstring(name), i == velMode):
         velMode = i
     igEndCombo()
-  if velMode == 1:
+  if velMode > 0:
     igSetCursorScreenPos(v2(origin.x + 2, velTop + 14 + igGetFrameHeight()))
     igSetNextItemWidth(KeyW - 4)
-    if igBeginCombo("##volRes", ["1/16", "1/32", "1/64"][cur().volRes]):
+    if igBeginCombo("##volRes", ["1/16", "1/32", "1/64"][cur().ccRes]):
       for i, name in ["1/16", "1/32", "1/64"]:
-        if igSelectable(cstring(name), i == cur().volRes):
-          cur().volRes = i
+        if igSelectable(cstring(name), i == cur().ccRes):
+          cur().ccRes = i
       igEndCombo()
 
   if keysHovered or sheetHovered or igIsItemHovered():
@@ -605,38 +605,39 @@ proc pianoRoll() =
   let onLine = proc(n: Note): bool = # the faint line across the note's length
     mouse.x >= tickX(n.start.float) and mouse.x <= tickX(float(n.start + n.len)) and
       abs(bottom - float32(n.vel) / 127 * velH - mouse.y) <= 4
-  let volHit = proc(): int = # the volume point under the mouse
+  template pts(): untyped = cur().cc[velMode - 1] # the curve shown, in a curve mode
+  let volHit = proc(): int = # the curve point under the mouse
     result = -1
-    for i, p in cur().vol:
+    for i, p in pts:
       if abs(tickX(p.t.float) - mouse.x) <= 6 and abs(bottom - float32(p.v) / 127 * velH - mouse.y) <= 6:
         return i
   let volVal = proc(): int = clamp(int((bottom - mouse.y) / velH * 127), 0, 127)
   let loopT = song.clips[song.clip].loopEnd
-  if velMode == 1:
-    if cur().vol.len == 0: # the default, as a point at the start
-      cur().vol.add (0, DefaultVol)
+  if velMode > 0:
+    if pts.len == 0: # the default, as a point at the start
+      pts.add (0, CcDefault[velMode - 1])
     if velDown:
       volDrag = volHit()
       if volDrag < 0: # a click on empty space adds a point, at the snap
         let t = min(snap(xTick(mouse.x), grid), loopT)
-        volDrag = cur().vol.len
-        for i, p in cur().vol:
+        volDrag = pts.len
+        for i, p in pts:
           if p.t >= t:
             volDrag = i
             break
-        if volDrag < cur().vol.len and cur().vol[volDrag].t == t: # that tick has one: take it
-          cur().vol[volDrag].v = volVal()
+        if volDrag < pts.len and pts[volDrag].t == t: # that tick has one: take it
+          pts[volDrag].v = volVal()
         else:
-          cur().vol.insert((t, volVal()), volDrag)
-    if velHeld and volDrag in 0 ..< cur().vol.len:
-      let vol = cur().vol
+          pts.insert((t, volVal()), volDrag)
+    if velHeld and volDrag in 0 ..< pts.len:
+      let vol = pts
       let lo = if volDrag > 0: vol[volDrag - 1].t + 1 else: 0
       let hi = if volDrag < vol.high: vol[volDrag + 1].t - 1 else: loopT
-      cur().vol[volDrag] = (clamp(snap(xTick(mouse.x), grid), lo, hi), volVal())
+      pts[volDrag] = (clamp(snap(xTick(mouse.x), grid), lo, hi), volVal())
     if velHovered and igIsMouseDown(ImGuiMouseButton.Right): # dragging deletes; the last point stays
       let h = volHit()
-      if h >= 0 and cur().vol.len > 1:
-        cur().vol.delete h
+      if h >= 0 and pts.len > 1:
+        pts.delete h
   if velMode == 0 and velDown:
     velLine.setLen 0
     for i, n in cur().notes:
@@ -654,10 +655,10 @@ proc pianoRoll() =
   if velHeld or velHovered:
     var lines: seq[string]
     let line = proc(v: int): string = fmt"{v} - {int(round(v / 127 * 100))}%"
-    if velMode == 1:
+    if velMode > 0:
       let h = if velHeld: volDrag else: volHit()
-      if h in 0 ..< cur().vol.len:
-        lines.add line(cur().vol[h].v)
+      if h in 0 ..< pts.len:
+        lines.add line(pts[h].v)
     elif velHeld:
       lines.add line(clamp(int((bottom - mouse.y) / velH * 127), 1, 127))
     else:
@@ -751,16 +752,16 @@ proc pianoRoll() =
     dl.addRectFilled(v2(bx0, by0), v2(bx1, by1), rgb(66, 150, 250, 50))
     dl.addRect(v2(bx0, by0), v2(bx1, by1), rgb(66, 150, 250))
   dl.popClipRect()
-  if velMode == 1:
+  if velMode > 0:
     dl.pushClipRect(v2(gridX, velTop), v2(right, bottom), true)
     let col = rgb(110, 210, 110)
     let pt = proc(p: tuple[t, v: int]): ImVec2 = v2(tickX(p.t.float), bottom - float32(p.v) / 127 * velH)
-    for i, p in cur().vol:
+    for i, p in pts:
       if i > 0:
-        dl.addLine(pt(cur().vol[i - 1]), pt(p), col, 2)
-    for p in cur().vol:
+        dl.addLine(pt(pts[i - 1]), pt(p), col, 2)
+    for p in pts:
       dl.addCircleFilled(pt(p), 4, col)
-    let last = pt(cur().vol[^1]) # held to the loop point
+    let last = pt(pts[^1]) # held to the loop point
     dl.addLine(last, v2(le, last.y), col, 2)
     dl.popClipRect()
   for n in (if velMode == 0: cur().notes else: @[]):
