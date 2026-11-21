@@ -65,6 +65,7 @@ var
   keyH = 14f32 # zoom: pixels per pitch row
   scrollX = 0f32
   scrollY = float32(127 - 84) * keyH # C6 at the top
+  velFrac = 0.25f32 # share of the sheet+velocity height taken by the velocity lane
   sbGrab: ScrollGrab
   sbOff: float32
   drag = Idle
@@ -211,10 +212,12 @@ proc pianoRoll() =
     gridX = origin.x + KeyW
     gridW = avail.x - KeyW - SbW
     right = gridX + gridW
-    paneH = (avail.y - RulerH - SbW) / 2 # sheet on top, velocity below, in half
+    bothH = avail.y - RulerH - SbW # sheet on top, velocity below
+    velH = bothH * velFrac
+    paneH = bothH - velH # sheet height
     sheetTop = origin.y + RulerH
     velTop = sheetTop + paneH
-    bottom = velTop + paneH
+    bottom = velTop + velH
     grid = Snaps[snapIdx][1]
     mouse = v2(io.mousePos.x, io.mousePos.y) # imgui's ImVec2 is not cimgui's
 
@@ -234,6 +237,16 @@ proc pianoRoll() =
     127 - int(clamp((y - sheetTop + scrollY) / keyH, 0, 127))
 
   # --- input ---
+  # drag the border between sheet and velocity lane; first submitted item wins
+  # hover where items overlap, so this goes before the lanes' buttons
+  igSetCursorScreenPos(v2(origin.x, velTop - 8))
+  discard igInvisibleButton("split", v2(avail.x - SbW, 16))
+  let splitHot = igIsItemHovered() or igIsItemActive()
+  if splitHot:
+    igSetMouseCursor(ImGuiMouseCursor.ResizeNS)
+  if igIsItemActive():
+    velFrac = clamp((bottom - io.mousePos.y) / bothH, 0.1, 0.9)
+
   igSetCursorScreenPos(v2(origin.x, sheetTop))
   discard igInvisibleButton("keys", v2(KeyW, paneH))
   let keysHeld = igIsItemActive()
@@ -246,7 +259,7 @@ proc pianoRoll() =
   )
   let sheetHovered = igIsItemHovered()
   igSetCursorScreenPos(v2(gridX, velTop))
-  discard igInvisibleButton("vel", v2(gridW, paneH))
+  discard igInvisibleButton("vel", v2(gridW, velH))
   let velHeld = igIsItemActive()
 
   if keysHovered or sheetHovered or igIsItemHovered():
@@ -314,7 +327,7 @@ proc pianoRoll() =
 
   # dragging in the velocity lane sets the notes whose bar is under the mouse
   if velHeld:
-    let v = clamp(int((bottom - mouse.y) / paneH * 127), 1, 127)
+    let v = clamp(int((bottom - mouse.y) / velH * 127), 1, 127)
     for n in song.notes.mitems:
       if abs(tickX(n.start.float) - mouse.x) <= 4:
         n.vel = v
@@ -376,7 +389,12 @@ proc pianoRoll() =
         v2(x + 3, origin.y + 1), rgb(200, 200, 200), cstring($(gt div BarTicks + 1))
       )
     gt += step
-  dl.addLine(v2(gridX, velTop), v2(right, velTop), rgb(90, 90, 90), 2)
+  dl.addLine(
+    v2(gridX, velTop),
+    v2(right, velTop),
+    (if splitHot: rgb(110, 160, 255) else: rgb(90, 90, 90)),
+    (if splitHot: 3 else: 2),
+  )
   let le = tickX(song.loopEnd.float)
   dl.addLine(v2(le, origin.y), v2(le, sheetTop), rgb(200, 120, 60), 3)
 
@@ -393,7 +411,7 @@ proc pianoRoll() =
   dl.popClipRect()
   for n in song.notes:
     let x0 = tickX(n.start.float)
-    let vy = bottom - float32(n.vel) / 127 * paneH
+    let vy = bottom - float32(n.vel) / 127 * velH
     dl.addLine(v2(x0, bottom), v2(x0, vy), rgb(110, 210, 110), 2)
     dl.addCircleFilled(v2(x0, vy), 4, rgb(110, 210, 110))
 
