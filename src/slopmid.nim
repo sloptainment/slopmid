@@ -189,9 +189,9 @@ proc transport() =
   let io = igGetIO()
   if igButton(if song.playing: "Pause" else: "Play", v2(60, 0)) or
       (igIsKeyPressed(ImGuiKey.Space, false) and not io.wantTextInput):
-    song.playing = (song.songMode or focusTrack >= 0) and not song.playing
+    song.playing = (song.songMode or song.clips[song.clip].len > 0) and not song.playing
   igSameLine()
-  if igButton("Stop", v2(60, 0)) and (song.songMode or focusTrack >= 0):
+  if igButton("Stop", v2(60, 0)) and (song.songMode or song.clips[song.clip].len > 0):
     song.playing = false
     song.pos = 0
   igSameLine()
