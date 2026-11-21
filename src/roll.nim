@@ -10,6 +10,8 @@ const
   Lanes* = 32 ## rows in the song window
   CcNum* = [7, 11, 10] ## the curves: volume, expression, pan
   CcDefault* = [100, 127, 64] ## a track's value with no points; the GM defaults
+  BendRange* = 24 ## semitones either way, sent to each channel as RPN 0
+  BendMid* = 8192 ## pitch bend wheel centre
   CcSteps* = [Ppq div 4, Ppq div 8, Ppq div 16, Ppq div 24] ## ticks between messages: 1/16, 1/32, 1/64, 1/96
 
 type
@@ -17,6 +19,7 @@ type
     start*, len*: int ## ticks
     pitch*, vel*: int
     sel*: bool ## selected in the piano roll
+    bend*: seq[tuple[t: int, v: float, sel: bool]] ## pitch bend: points ramped between, `v` in semitones from the note, `sel` is the editor's selection. Empty = flat; else the first point is the note's start and the last its end (their `t` unused), the rest sorted by `t` ticks into the note, those at or past the end ignored
 
   Track* = object
     notes*: seq[Note]
@@ -41,7 +44,7 @@ type
     pitch, vel: int
     cc: bool ## a curve message, not a note
     which: int ## the curve of a `cc`
-    vals: array[3, int] ## the track's curves now: sent to the channel before a note; a `cc` sends `vals[which]`
+    vals: array[4, int] ## the track's curves now (3: pitch bend): sent to the channel before a note; a `cc` sends `vals[which]`
 
   Msg* = tuple[offset, status, d1, d2: int] ## a MIDI message, `offset` frames into the block
 
@@ -60,6 +63,8 @@ type
     sounding: seq[tuple[src, track, pitch, ch: int]] ## src: index into the block's sources
     sent: array[16, int] ## bank * 128 + program + 1 last sent per channel, 0 = none
     sentCc: array[3, array[16, int]] ## value + 1 last sent per curve and channel, 0 = none
+    sentBend: array[16, int] ## bend last sent per channel, minus `BendMid`: 0 = centre or none
+    bendSet: array[16, bool] ## the channel has had its bend range set
 
 proc snap*(t, grid: int): int =
   ## `t` to the nearest multiple of `grid`.
@@ -87,6 +92,55 @@ proc ccAt*(t: Track, c, tick: int): int =
       let q = pts[i - 1]
       return q.v + int(round((p.v - q.v) * (tick - q.t) / (p.t - q.t)))
   pts[^1].v
+
+proc bendVisible*(n: Note, k: int): bool =
+  ## Point `k` of `n.bend` is in play: an end, or inside the note.
+  n.bend.len >= 2 and (k == 0 or k == n.bend.high or n.bend[k].t in 1 ..< n.len)
+
+proc bendIdx*(n: Note): seq[int] =
+  ## The points of `n.bend` in play.
+  for k in 0 .. n.bend.high:
+    if n.bendVisible(k):
+      result.add k
+
+proc bendTick*(n: Note, k: int): int =
+  ## Point `k`, in ticks into the note.
+  if k == 0: 0 elif k == n.bend.high: n.len else: n.bend[k].t
+
+proc bendPts*(n: Note): seq[tuple[t: int, v: float]] =
+  ## The points in play as (ticks into the note, semitones); a flat line without any.
+  for k in n.bendIdx:
+    result.add (n.bendTick(k), n.bend[k].v)
+  if result.len == 0:
+    result = @[(0, 0.0), (n.len, 0.0)]
+
+proc bendOff*(n: Note, tick: int): float =
+  ## `n`'s bend in semitones at `tick`.
+  let pts = n.bendPts
+  let t = tick - n.start
+  for i in 1 .. pts.high:
+    if t <= pts[i].t:
+      return pts[i - 1].v + (pts[i].v - pts[i - 1].v) * ((t - pts[i - 1].t) / (pts[i].t - pts[i - 1].t))
+  pts[^1].v
+
+proc bendRaw(off: float): int =
+  clamp(BendMid + int(round(off / BendRange * BendMid.float)), 0, 2 * BendMid - 1)
+
+proc bendWinner*(t: Track, tick: int): int =
+  ## One channel, one wheel: the note sounding at `tick` with a bend, the latest start winning; -1 if none.
+  result = -1
+  for i, n in t.notes:
+    if n.start <= tick and tick < n.start + n.len and n.bendOff(tick).bendRaw != BendMid and
+        (result < 0 or n.start >= t.notes[result].start):
+      result = i
+
+proc bendAt*(t: Track, tick: int): int =
+  ## The wheel at `tick`, 0 .. 16383.
+  let w = t.bendWinner(tick)
+  if w < 0: BendMid else: t.notes[w].bendOff(tick).bendRaw
+
+proc hasBend(t: Track): bool =
+  t.notes.anyIt(it.bend.anyIt(it.v != 0))
 
 proc audible(ts: seq[Track], i: int): bool =
   not ts[i].mute and (ts[i].solo or not ts.anyIt(it.solo))
@@ -187,12 +241,12 @@ proc advance*(s: var Song, frames, rate: int): seq[Msg] =
       for ti, t in tracks(si):
         if not tracks(si).audible(ti):
           continue
-        for c in 0 .. 2:
-          if t.cc[c].len > 0:
+        for c in 0 .. 3:
+          if (if c < 3: t.cc[c].len > 0 else: t.hasBend):
             let step = CcSteps[t.ccRes]
             for k in ceil(lo / step.float).int ..< ceil(hi / step.float).int:
-              var vals: array[3, int]
-              vals[c] = t.ccAt(c, k * step)
+              var vals: array[4, int]
+              vals[c] = if c < 3: t.ccAt(c, k * step) else: t.bendAt(k * step)
               evs.add Ev(
                 offset: round(base + (float(k * step) - lo) * fpt).int,
                 src: si, track: ti, cc: true, which: c, vals: vals,
@@ -207,7 +261,7 @@ proc advance*(s: var Song, frames, rate: int): seq[Msg] =
               on: true,
               pitch: n.pitch,
               vel: n.vel,
-              vals: [t.ccAt(0, n.start), t.ccAt(1, n.start), t.ccAt(2, n.start)],
+              vals: [t.ccAt(0, n.start), t.ccAt(1, n.start), t.ccAt(2, n.start), t.bendAt(n.start)],
             )
           if en >= lo and en < hi:
             evs.add Ev(
@@ -227,21 +281,35 @@ proc advance*(s: var Song, frames, rate: int): seq[Msg] =
   else:
     for (si, ti, p, _) in s.sounding:
       evs.add Ev(src: si, track: ti, pitch: p)
+  template sendBend(ch, at, v: int) =
+    if s.sentBend[ch] != v - BendMid:
+      if not s.bendSet[ch]: # RPN 0, data entry MSB: the range in semitones
+        s.bendSet[ch] = true
+        for (cc, val) in [(101, 0), (100, 0), (6, BendRange)]:
+          result.add (at, 0xB0 or ch, cc, val)
+      s.sentBend[ch] = v - BendMid
+      result.add (at, 0xE0 or ch, v and 127, v shr 7)
+
   # offs before ons at the same frame; offs only for what sounds
   for e in evs.sortedByIt((it.offset, it.on)):
     let at = min(e.offset, frames - 1)
     if e.cc: # only a channel that sounds the track takes it
       for x in s.sounding:
         if x.src == e.src and x.track == e.track:
-          if s.sentCc[e.which][x.ch] != e.vals[e.which] + 1:
+          if e.which == 3:
+            sendBend(x.ch, at, e.vals[3])
+          elif s.sentCc[e.which][x.ch] != e.vals[e.which] + 1:
             s.sentCc[e.which][x.ch] = e.vals[e.which] + 1
             result.add (at, 0xB0 or x.ch, CcNum[e.which], e.vals[e.which])
           break
       continue
     let i = s.soundIdx(e.src, e.track, e.pitch)
     if i >= 0: # an off, or a retrigger
-      result.add (at, 0x80 or s.sounding[i].ch, e.pitch, 0)
+      let och = s.sounding[i].ch
+      result.add (at, 0x80 or och, e.pitch, 0)
       s.sounding.delete i
+      if s.sounding.allIt(it.ch != och): # nothing left on the channel to keep bent
+        sendBend(och, at, BendMid)
     if e.on:
       var ch = -1
       for x in s.sounding:
@@ -267,6 +335,7 @@ proc advance*(s: var Song, frames, rate: int): seq[Msg] =
         if s.sentCc[c][ch] != e.vals[c] + 1:
           s.sentCc[c][ch] = e.vals[c] + 1
           result.add (at, 0xB0 or ch, CcNum[c], e.vals[c])
+      sendBend(ch, at, e.vals[3])
       result.add (at, 0x90 or ch, e.pitch, e.vel)
       s.sounding.add (e.src, e.track, e.pitch, ch)
 
@@ -413,4 +482,24 @@ when isMainModule:
     pans.add v.advance(1024, 22050).filterIt(it.status == 0xB0 and it.d1 == 10).mapIt(it.d2)
   doAssert pans == @[0, 32, 64, 95, 127], $pans
   doAssert Track().ccAt(2, 0) == 64
+  # bend: 0 -> +12 semitones over the first beat, one message per 1/16 (24 ticks) after the range is set to 24
+  var bt = Song(bpm: 120, playing: true, clips: @[@[Track(ccRes: 0)]])
+  bt.nt = @[Note(start: 0, len: Ppq, pitch: 60, vel: 100, bend: @[(0, 0.0, false), (0, 12.0, false)])]
+  var bends: seq[Msg]
+  for blk in 0 ..< 40:
+    bends.add bt.advance(1024, 22050)
+  doAssert bends.filterIt(it.status == 0xB0 and it.d1 in [100, 101, 6]).mapIt(it.d2) == @[0, 0, BendRange], $bends
+  # +3, +6, +9 semitones of 24 = 9216, 10240, 11264; the wheel recentres by the note's end at tick 96
+  doAssert bends.filterIt(it.status == 0xE0).mapIt(it.d2 * 128 + it.d1) == @[9216, 10240, 11264, 8192], $bends
+  # one wheel per track: the latest start with a bend wins, a flat note never does
+  let bw = Track(notes: @[
+    Note(start: 0, len: Ppq, bend: @[(0, 0.0, false), (0, 12.0, false)]),
+    Note(start: 48, len: Ppq),
+    Note(start: 48, len: Ppq, bend: @[(0, 6.0, false), (0, 6.0, false)]),
+  ])
+  doAssert (bw.bendWinner(20), bw.bendWinner(60), bw.bendWinner(120), bw.bendWinner(200)) == (0, 2, 2, -1)
+  doAssert (bw.bendAt(60), bw.bendAt(200)) == (8192 + 2048, 8192)
+  # a middle point past the note's end is ignored; the ramp passes through the others
+  let bm = Note(len: 48, bend: @[(0, 0.0, false), (24, 4.0, false), (60, 9.0, false), (0, 0.0, false)])
+  doAssert (bm.bendOff(12), bm.bendOff(24), bm.bendOff(36)) == (2.0, 4.0, 2.0)
   echo "roll: ok"

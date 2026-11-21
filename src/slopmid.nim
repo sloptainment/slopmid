@@ -2,6 +2,7 @@
 ## right-click deletes. Note names: click to audition. Velocity lane: drag.
 ## Select tool (corner buttons): drag a box to select (in the Vol/Exp lane: curve points; Shift adds), drag a selected note to move them all, Delete removes them; Ctrl+A selects all (or deselects, if anything is selected), Ctrl+D duplicates the selection after its last note, Ctrl+Q quantizes the selection's starts and ends to the snap.
 ## Ctrl+C copies the selection, Ctrl+V pastes it as a group at the playhead set on the ruler, rounded to the snap.
+## Bend tool (corner buttons): every note shows its pitch bend as a line between points, the first at its start and the last at its end (pinned in time). Drag a point (up/down is semitones from the note, continuous), click the line or a note to add one at the snap, right-drag a middle point to delete it, Ctrl+click puts a point on the note's own pitch. Selection as in Select, built in: click, Shift+click, drag a box, Delete, Ctrl+A. Notes themselves are untouched.
 ## Wheel scrolls pitch, Shift+wheel scrolls time, middle-drag pans, Ctrl+middle-drag zooms. Space plays/pauses.
 
 import std/[locks, math, os, sequtils, strformat, strutils]
@@ -86,6 +87,7 @@ type Drag = enum
 type Tool = enum
   Draw
   Select
+  Bend ## the piano roll only
 
 type PDrag = enum ## dragging a placement in the song window
   PIdle
@@ -109,6 +111,9 @@ var
   scrollY = float32(127 - 84) * keyH # C6 at the top
   velMode = 0 # velocity lane's combo: Vel, Vol, Exp, Pan; a curve's index in `Track.cc` is velMode - 1
   volDrag = -1 # index of the curve point being dragged
+  bendNote = -1 # the note whose bend point is being dragged, and which point of its `bend`
+  bendPt: int
+  bendBox: bool # a selection box of bend points is being dragged, from `boxA`
   ptBoxA: ImVec2 # where the lane's selection box started, relative to the scrolled lane
   velFrac = 0.25f32 # share of the sheet+velocity height taken by the velocity lane
   sbGrab: ScrollGrab
@@ -312,20 +317,22 @@ iterator playLines(): float =
   else:
     yield song.pos
 
-proc toolButtons(tool: var Tool, origin: ImVec2) =
-  ## The Draw and Select buttons in a window's top-left corner.
+proc toolButtons(tool: var Tool, origin: ImVec2, bend = false) =
+  ## The Draw and Select buttons in a window's top-left corner, and Bend if `bend`.
   let dl = igGetWindowDrawList()
-  for (i, t) in [(0, Draw), (1, Select)]:
-    let a = v2(origin.x + i.float32 * KeyW / 2, origin.y)
+  let ts = if bend: @[Draw, Select, Bend] else: @[Draw, Select]
+  let w = KeyW / ts.len.float32
+  for i, t in ts:
+    let a = v2(origin.x + i.float32 * w, origin.y)
     igSetCursorScreenPos(a)
-    if igInvisibleButton(cstring($t), v2(KeyW / 2, RulerH)):
+    if igInvisibleButton(cstring($t), v2(w, RulerH)):
       tool = t
     if igIsItemHovered():
       igSetTooltip("%s", cstring($t))
-    let c = v2(a.x + KeyW / 4, a.y + RulerH / 2)
+    let c = v2(a.x + w / 2, a.y + RulerH / 2)
     let col = if tool == t: rgb(255, 255, 255) else: rgb(130, 130, 140)
     if tool == t:
-      dl.addRectFilled(a, v2(a.x + KeyW / 2, a.y + RulerH), rgb(66, 150, 250), 2)
+      dl.addRectFilled(a, v2(a.x + w, a.y + RulerH), rgb(66, 150, 250), 2)
     case t
     of Draw: # a pencil, tip down-left
       dl.addLine(v2(c.x - 3, c.y + 3), v2(c.x + 5, c.y - 5), col, 3)
@@ -337,6 +344,10 @@ proc toolButtons(tool: var Tool, origin: ImVec2) =
       for d in countup(-5, 3, 4):
         dl.addLine(v2(c.x - 6, c.y + d.float32), v2(c.x - 6, c.y + d.float32 + 2), col)
         dl.addLine(v2(c.x + 6, c.y + d.float32), v2(c.x + 6, c.y + d.float32 + 2), col)
+    of Bend: # a swoop
+      dl.addLine(v2(c.x - 6, c.y + 2), v2(c.x - 2, c.y - 5), col, 2)
+      dl.addLine(v2(c.x - 2, c.y - 5), v2(c.x + 2, c.y + 5), col, 2)
+      dl.addLine(v2(c.x + 2, c.y + 5), v2(c.x + 6, c.y - 2), col, 2)
 
 proc pianoRoll() =
   let io = igGetIO()
@@ -383,13 +394,24 @@ proc pianoRoll() =
   if igIsItemActive():
     velFrac = clamp((bottom - io.mousePos.y) / bothH, 0.1, 0.9)
 
-  toolButtons(tool, origin)
+  toolButtons(tool, origin, bend = true)
+  let notesOk = tool != Bend # in Bend the notes are only looked at
+  if tool == Bend:
+    for n in cur().notes.mitems:
+      if n.bend.len < 2: # the two end points, flat
+        n.bend = @[(0, 0.0, false), (0, 0.0, false)]
 
   if velMode == 0 and igIsWindowFocused() and io.keyCtrl and igIsKeyPressed(ImGuiKey.A, false) and not io.wantTextInput:
-    let all = not cur().notes.anyIt(it.sel) # anything selected: deselect instead
-    for n in cur().notes.mitems:
-      n.sel = all
-  if igIsWindowFocused() and io.keyCtrl and igIsKeyPressed(ImGuiKey.D, false) and not io.wantTextInput:
+    if notesOk:
+      let all = not cur().notes.anyIt(it.sel) # anything selected: deselect instead
+      for n in cur().notes.mitems:
+        n.sel = all
+    else:
+      let all = not cur().notes.anyIt(it.bend.anyIt(it.sel))
+      for n in cur().notes.mitems:
+        for k in 0 .. n.bend.high:
+          n.bend[k].sel = all and n.bendVisible(k)
+  if notesOk and igIsWindowFocused() and io.keyCtrl and igIsKeyPressed(ImGuiKey.D, false) and not io.wantTextInput:
     let sel = cur().notes.filterIt(it.sel)
     if sel.len > 0:
       let first = sel.mapIt(it.start).min
@@ -403,11 +425,11 @@ proc pianoRoll() =
         var m = n
         m.start += at - first
         cur().notes.add m
-  if igIsWindowFocused() and io.keyCtrl and igIsKeyPressed(ImGuiKey.C, false) and not io.wantTextInput:
+  if notesOk and igIsWindowFocused() and io.keyCtrl and igIsKeyPressed(ImGuiKey.C, false) and not io.wantTextInput:
     let sel = cur().notes.filterIt(it.sel)
     if sel.len > 0:
       noteClip = sel
-  if igIsWindowFocused() and io.keyCtrl and igIsKeyPressed(ImGuiKey.V, false) and not io.wantTextInput and
+  if notesOk and igIsWindowFocused() and io.keyCtrl and igIsKeyPressed(ImGuiKey.V, false) and not io.wantTextInput and
       focusTrack >= 0 and noteClip.len > 0:
     let d = snap(clipPos().int, grid) - noteClip.mapIt(it.start).min # the group's first note lands on the playhead
     for n in cur().notes.mitems:
@@ -416,13 +438,13 @@ proc pianoRoll() =
       var m = n
       m.start += d
       cur().notes.add m
-  if igIsWindowFocused() and io.keyCtrl and igIsKeyPressed(ImGuiKey.Q, false) and not io.wantTextInput:
+  if notesOk and igIsWindowFocused() and io.keyCtrl and igIsKeyPressed(ImGuiKey.Q, false) and not io.wantTextInput:
     for n in cur().notes.mitems:
       if n.sel:
         let s = snap(n.start, grid)
         n.len = max(grid, snap(n.start + n.len, grid) - s) # at least one snap long
         n.start = s
-  if igIsWindowFocused() and (io.keyCtrl or io.keyShift) and not io.wantTextInput:
+  if notesOk and igIsWindowFocused() and (io.keyCtrl or io.keyShift) and not io.wantTextInput:
     let up = igIsKeyPressed(ImGuiKey.UpArrow, true)
     if up or igIsKeyPressed(ImGuiKey.DownArrow, true):
       let anySel = cur().notes.anyIt(it.sel)
@@ -513,10 +535,123 @@ proc pianoRoll() =
   let onEdge =
     hit >= 0 and
     tickX(float(cur().notes[hit].start + cur().notes[hit].len)) - mouse.x < EdgeW
-  if sheetHovered and (onEdge or drag == Resize):
+  if notesOk and sheetHovered and (onEdge or drag == Resize):
     igSetMouseCursor(ImGuiMouseCursor.ResizeEW)
 
-  if sheetHovered and igIsMouseClicked(ImGuiMouseButton.Left):
+  # --- bend points: a point is (note, index into its `bend`) ---
+  proc bendXY(n: Note, k: int): ImVec2 =
+    v2(tickX(float(n.start + n.bendTick(k))), pitchY(n.pitch) + keyH / 2 - float32(n.bend[k].v) * keyH)
+  proc bendVal(n: Note): float = # the mouse's height as semitones from `n`
+    clamp(float((pitchY(n.pitch) + keyH / 2 - mouse.y) / keyH), -BendRange.float, BendRange.float)
+  proc bendHit(): tuple[note, pt: int] = # the point under the mouse
+    result = (-1, -1)
+    for i in countdown(cur().notes.high, 0):
+      let n = cur().notes[i]
+      for k in n.bendIdx:
+        let q = bendXY(n, k)
+        if abs(q.x - mouse.x) <= 6 and abs(q.y - mouse.y) <= 6:
+          return (i, k)
+  proc bendLine(): int = # the note whose bend line, else body, is under the mouse
+    for i in countdown(cur().notes.high, 0):
+      let n = cur().notes[i]
+      let ks = n.bendIdx
+      for j in 1 .. ks.high:
+        let (a, b) = (bendXY(n, ks[j - 1]), bendXY(n, ks[j]))
+        let (dx, dy) = (b.x - a.x, b.y - a.y)
+        let l2 = dx * dx + dy * dy
+        let u = if l2 == 0: 0f32 else: clamp(((mouse.x - a.x) * dx + (mouse.y - a.y) * dy) / l2, 0, 1)
+        let (ex, ey) = (mouse.x - a.x - u * dx, mouse.y - a.y - u * dy)
+        if ex * ex + ey * ey <= 36:
+          return i
+    hit
+  proc addBend(i: int, v: float) = # a point at the snapped tick, or that tick's own point, set to `v`
+    template n(): untyped = cur().notes[i]
+    if n.len >= 2:
+      let t = clamp(snap(xTick(mouse.x), grid) - n.start, 1, n.len - 1)
+      var k = 1
+      while k < n.bend.high and n.bend[k].t < t:
+        inc k
+      if k < n.bend.high and n.bend[k].t == t:
+        n.bend[k].v = v
+      else:
+        n.bend.insert((t, v, false), k)
+      bendNote = i
+      bendPt = k
+  if not notesOk:
+    if sheetHovered and igIsMouseClicked(ImGuiMouseButton.Left):
+      let (hi, hk) = bendHit()
+      let ln = bendLine()
+      bendNote = -1
+      if hi >= 0:
+        bendNote = hi
+        bendPt = hk
+        if io.keyCtrl: # on the note's own pitch; a selected point takes its whole selection along
+          let group = cur().notes[hi].bend[hk].sel
+          cur().notes[hi].bend[hk].v = 0
+          if group:
+            for n in cur().notes.mitems:
+              for k in n.bendIdx:
+                if n.bend[k].sel:
+                  n.bend[k].v = 0
+          bendNote = -1
+        elif not cur().notes[hi].bend[hk].sel: # a selected point keeps the group
+          if not io.keyShift:
+            for n in cur().notes.mitems:
+              for q in n.bend.mitems:
+                q.sel = false
+          cur().notes[hi].bend[hk].sel = true
+      elif ln >= 0:
+        addBend(ln, if io.keyCtrl: 0.0 else: bendVal(cur().notes[ln]))
+        if io.keyCtrl:
+          bendNote = -1
+      else:
+        bendBox = true
+        boxA = v2(mouse.x - gridX + scrollX, mouse.y - sheetTop + scrollY)
+    if not igIsMouseDown(ImGuiMouseButton.Left):
+      if bendBox: # the points in the box get selected
+        let (bx0, bx1) = (min(boxA.x + gridX - scrollX, mouse.x), max(boxA.x + gridX - scrollX, mouse.x))
+        let (by0, by1) = (min(boxA.y + sheetTop - scrollY, mouse.y), max(boxA.y + sheetTop - scrollY, mouse.y))
+        for n in cur().notes.mitems:
+          for k in n.bendIdx:
+            let q = bendXY(n, k)
+            if q.x >= bx0 and q.x <= bx1 and q.y >= by0 and q.y <= by1:
+              n.bend[k].sel = true
+            elif not io.keyShift:
+              n.bend[k].sel = false
+      bendBox = false
+      bendNote = -1
+    if bendNote >= 0:
+      # the dragged point, or its whole selection, moves by the same ticks and semitones
+      let bn = cur().notes[bendNote]
+      let inGroup = proc(i, k: int): bool =
+        let n = cur().notes[i]
+        (i == bendNote and k == bendPt) or (n.bendVisible(k) and n.bend[k].sel)
+      var dt = 0 # the end points only move up and down
+      if bendPt > 0 and bendPt < bn.bend.high:
+        dt = snap(xTick(mouse.x), grid) - bn.start - bn.bend[bendPt].t
+      var dv = bendVal(bn) - bn.bend[bendPt].v
+      for i, n in cur().notes:
+        for k in n.bendIdx:
+          if inGroup(i, k):
+            dv = clamp(dv, -BendRange.float - n.bend[k].v, BendRange.float - n.bend[k].v)
+            if k > 0 and k < n.bend.high: # the group stops at its neighbours and the note's ends
+              let t = n.bend[k].t
+              if k > 1 and not inGroup(i, k - 1): dt = max(dt, n.bend[k - 1].t + 1 - t)
+              if k == n.bend.high - 1: dt = min(dt, n.len - 1 - t)
+              elif not inGroup(i, k + 1): dt = min(dt, min(n.bend[k + 1].t, n.len) - 1 - t)
+              if k == 1: dt = max(dt, 1 - t)
+      for i, n in cur().notes.mpairs:
+        for k in n.bendIdx:
+          if inGroup(i, k):
+            n.bend[k].v += dv
+            if k > 0 and k < n.bend.high:
+              n.bend[k].t += dt
+    elif sheetHovered and igIsMouseDown(ImGuiMouseButton.Right): # dragging deletes; not the ends
+      let (hi, hk) = bendHit()
+      if hi >= 0 and hk > 0 and hk < cur().notes[hi].bend.high:
+        cur().notes[hi].bend.delete hk
+
+  if notesOk and sheetHovered and igIsMouseClicked(ImGuiMouseButton.Left):
     if hit < 0 and tool == Draw:
       for n in cur().notes.mitems:
         n.sel = false
@@ -581,7 +716,13 @@ proc pianoRoll() =
     lastLen = cur().notes[dragNote].len
   of Idle:
     if velMode == 0 and igIsWindowFocused() and igIsKeyPressed(ImGuiKey.Delete, false) and not io.wantTextInput:
-      cur().notes.keepItIf(not it.sel)
+      if notesOk:
+        cur().notes.keepItIf(not it.sel)
+      else: # the selected middle points
+        for n in cur().notes.mitems:
+          for k in countdown(n.bend.high - 1, 1):
+            if n.bendVisible(k) and n.bend[k].sel:
+              n.bend.delete k
     elif tool == Draw and sheetHovered and igIsMouseDown(ImGuiMouseButton.Right) and hit >= 0:
       cur().notes.delete hit
 
@@ -812,7 +953,23 @@ proc pianoRoll() =
       if a.pitch == b.pitch and s < e:
         let y = pitchY(a.pitch)
         dl.addRectFilled(v2(tickX(s.float), y + 1), v2(tickX(e.float), y + keyH - 1), rgb(255, 30, 30), 2)
-  if drag == Box:
+  if tool == Bend:
+    # a point or segment is black where another note's bend wins the track's wheel there
+    # ponytail: O(notes^2) per frame; fine for a clip's worth of notes
+    let loses = proc(i, tick: int): bool =
+      let w = cur().bendWinner(tick)
+      w >= 0 and w != i
+    for i, n in cur().notes:
+      let ks = n.bendIdx
+      for j in 1 .. ks.high:
+        let mid = n.start + (n.bendTick(ks[j - 1]) + n.bendTick(ks[j])) div 2
+        dl.addLine(bendXY(n, ks[j - 1]), bendXY(n, ks[j]), if loses(i, mid): rgb(0, 0, 0) else: rgb(255, 255, 255), 2)
+      for k in ks:
+        let c = if loses(i, n.start + min(n.bendTick(k), n.len - 1)): rgb(0, 0, 0) else: rgb(255, 255, 255)
+        if n.bend[k].sel:
+          dl.addCircleFilled(bendXY(n, k), 5, rgb(255, 150, 30))
+        dl.addCircle(bendXY(n, k), 5, c, 0, 2)
+  if drag == Box or bendBox:
     dl.addRectFilled(v2(bx0, by0), v2(bx1, by1), rgb(66, 150, 250, 50))
     dl.addRect(v2(bx0, by0), v2(bx1, by1), rgb(66, 150, 250))
   dl.popClipRect()
@@ -862,6 +1019,9 @@ proc focus(clip, track: int) =
     n.sel = false
   for c in cur().cc.mitems:
     for p in c.mitems:
+      p.sel = false
+  for n in cur().notes.mitems:
+    for p in n.bend.mitems:
       p.sel = false
   if clip != song.clip:
     pSel = -1
