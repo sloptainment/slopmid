@@ -1,0 +1,617 @@
+= slopmid(1)
+:doctype: manpage
+:manmanual: slopmid Manual
+:mansource: slopmid 0.1.0
+:man-linkstyle: pass:[blue R < >]
+// Written from the source as of commit 02f7927. Lines starting with "// src:" point to where each
+// behaviour lives; they don't show up in the rendered page. Build it with:
+//   asciidoctor -b manpage MANPAGE.auto.adoc     (man page)
+//   asciidoctor MANPAGE.auto.adoc                (HTML)
+
+== NAME
+
+slopmid - a piano roll and clip arranger that handles MIDI channels for you
+
+== SYNOPSIS
+
+*slopmid* [_FILE_.smm]
+
+*slopmid* *-h* | *--help*
+
+== DESCRIPTION
+
+slopmid is a pattern-based MIDI sequencer that plays through the built-in *slopgs* GS synthesizer.
+You write *clips*, which are loops made of *tracks*. Each track has one sound (a bank and program,
+or a drum kit). Then you place clips on the 32 *lanes* of the *Song* window to build an
+arrangement.
+
+You never pick a MIDI channel. While the song plays, each track gets a channel only while one of
+its notes is sounding, and slopmid hands out the lowest free channel. One track can therefore
+share a channel with many others over a song, and more tracks than channels can exist as long as
+no more than 16 sound at the same moment. Drum tracks get the drum channel, plus extra drum parts
+when you need them. See *PLAYBACK AND CHANNEL ALLOCATION*.
+
+The timing is fixed at 96 ticks per beat in 4/4 time.
+// src: src/model.nim:6-7
+
+== OPTIONS
+
+_FILE_.smm::
+  Open this song at startup. If it can't be read, a *File error* popup shows the reason and
+  slopmid starts with an empty song.
+
+*-h*, *--help*::
+  Print the usage line and exit.
+// src: src/slopmid.nim:142-152, src/files.nim:58-67
+
+== TUTORIAL
+
+This walkthrough builds a short song: a drum loop, a bass line and a bent lead. You then arrange
+them and export the result. Each step names only the controls it uses; the reference sections
+below cover every control in detail.
+
+=== 1. Get oriented
+
+Start *slopmid* with no arguments. The window has four parts:
+
+* the *transport bar* under the menu: Play/Pause, Stop, Metronome, BPM, Snap, the position, the
+  Song/Clip mode switch and the channel meter;
+* *Clips* (top left): the current clip and its tracks;
+* *Song* (bottom left): the arrangement lanes;
+* *Piano roll* (right): the notes of the focused track.
+
+The piano roll is greyed out because no track has focus yet.
+
+=== 2. A drum track
+
+. In *Clips*, click *ADD* (under the track table). A track row appears.
+. Open the row's sound combo, which reads `000:000 Acoustic Grand Piano`. Scroll to the bottom and
+  pick *Rhythm*. The row now reads `Rhythm 000`.
+. Click the black preview strip on the right of the row. It turns blue-grey and the piano roll
+  becomes active for this track. The key column now shows General MIDI drum names such as
+  `Kick`, `Snare` and `ClHat`.
+. The roll opens around C6. Scroll down with the mouse wheel to the `Kick` row (key 36).
+. Set *Snap* in the transport to `1/4`.
+. Make sure the *Draw* tool (the pencil, top-left corner of the piano roll) is selected, then
+  left-click on the `Kick` row at beats 1, 2, 3 and 4 of bar 1. Each click adds a note, one beat
+  long, and plays it.
+. Set *Snap* to `1/8`. Click once on the `ClHat` row, then drag that note's right edge in to an
+  eighth. New notes copy the length of the last note you clicked or resized, so the rest of the
+  hats you click in at every eighth will be eighths too. If notes of the same pitch overlap, the
+  overlap is drawn red.
+. Press *Space*. The clip loops; its loop point is the orange mark on the ruler, at the end of the
+  last bar that has a note.
+. Press *Space* again to pause.
+
+To remove a note, right-click it. Hold the right button and sweep to erase several.
+
+=== 3. A bass track
+
+. In *Clips*, click *ADD* again. Set the new track's sound to `000:038 Synth Bass 1`, or type
+  `38` in its *P#* field.
+. Click its preview strip to focus it.
+. Click a key in the key column to hear the pitch. Clicking further right on a key plays it
+  louder.
+. Draw notes. Like the hats, each new note copies the length and velocity of the last note you
+  clicked or resized.
+. Drag a note to move it. Dragging across pitches plays each pitch as you go.
+. Make the bass wider than the drums by drawing into bar 2. The loop point moves to the end of
+  bar 2 for the whole clip.
+
+=== 4. Velocity
+
+The strip under the notes is the *Vel* lane. Each note has a stem there.
+
+* Drag up or down across stems to set velocities. The tooltip shows the value, for example
+  `100 - 79%`.
+* Select notes first (step 5 below) to have the drag change only those notes.
+* Drag the border between the sheet and the lane to resize it.
+
+=== 5. Selecting and editing groups
+
+. Click the *Select* tool (the dashed box next to the pencil).
+. Drag a box around some notes. Shift+drag adds to the selection.
+. Drag any selected note: the whole group moves together.
+. Try the following:
+  ** *Shift+Up* / *Shift+Down* to transpose by a semitone, *Ctrl+Up* / *Ctrl+Down* by an octave;
+  ** *Ctrl+D* to duplicate the selection right after itself;
+  ** *Ctrl+Q* to quantize the selection to the snap;
+  ** *Ctrl+A* to select all, and *Ctrl+A* again to select none.
+. *Ctrl+Z* undoes; *Ctrl+Shift+Z* or *Ctrl+Y* redoes.
+
+=== 6. A lead with pitch bend and pan
+
+. Add a third track. Set it to `000:081 Lead 2 (sawtooth)` and focus it.
+. Draw a few long notes.
+. Choose the *Bend* tool (the swoop, the third corner button). Every note now shows a white line
+  with a point at each end.
+. Click the line of a note partway along to add a bend point, then drag it up. The note bends
+  upward. Bend runs up to 24 semitones either way.
+. *Ctrl+click* a point to send it back to the note's own pitch. Right-drag over a middle point to
+  delete it.
+. Switch the lane combo (below the key column, showing `Vel`) to *Pan*. With *Draw*, click to add
+  pan points; the white bar marks the centre. *Ctrl+click* a point to centre it.
+. Do the same in *Vol* (CC 7) or *Exp* (CC 11) mode if you like. The small combo under the mode
+  sets how often the curve is sent: `1/16` to `1/96`.
+
+=== 7. A second clip
+
+. Name the clip by typing `verse` into *Clip name*.
+. Click *Duplicate*. A copy, also named `verse`, becomes the current clip. Rename it `chorus`.
+. Change some notes in `chorus`.
+. Use the *Clip* combo to switch between the two clips.
+
+=== 8. Arrange
+
+. Select `verse` in the *Clip* combo.
+. In *Song*, with the *Draw* tool, click in lane 1 at bar 1. A `verse` box appears, as long as the
+  clip's loop. Keep holding the button and drag to position it before you let go.
+. Pick `chorus` in the *Clip* combo and place it after `verse`.
+. Drag a box's right edge past its end to repeat the clip. White lines mark each repeat. Drag the
+  left edge to start the clip part-way in.
+. Switch the transport to *Song* mode and press *Space*. The song plays from the song playhead
+  and stops, rewinding to bar 1, at the end of the last box.
+. Click or drag on the Song window's ruler to move the song playhead.
+
+The *M* and *S* boxes at the left of each lane mute or solo the lane. They appear only when the
+lanes are tall enough; Ctrl+middle-drag zooms the lanes vertically.
+
+=== 9. Save and export
+
+. *Ctrl+S* saves. The first save asks for a file name and adds `.smm` if you leave it off. The
+  title bar shows the name, with `*` while there are unsaved changes.
+. *Ctrl+E* (*File > Export MIDI...*) writes a Standard MIDI File of what you'd hear in the current
+  mode: the arrangement in Song mode, one pass of the clip in Clip mode.
+. *File > Export WAV...* renders the same thing to a WAV file, with a progress bar.
+
+Quit with *File > Exit*, which asks about unsaved changes. Closing the window with the window
+manager's close button quits at once *without asking*.
+
+== THE SCREEN
+
+The menu bar holds *File*, *Edit* and *Window*. Below it, the transport bar stays fixed so no
+window can cover it. The three windows dock in the space that's left. Drag their tabs to rearrange
+them, and hide or show them from the *Window* menu. The layout is not saved; each start uses the
+default layout.
+// src: src/slopmid.nim:93-137, src/wrap/gui.nim:65-66
+
+=== Transport bar
+
+*Play* / *Pause*, *Space*::
+  Toggles playback. In Clip mode it does nothing until the current clip has a track. Space is
+  ignored while you are typing in a text field.
+*Stop*::
+  Stops and returns the playhead of the current mode to the start.
+*Metronome*::
+  Toggles a click on every beat, with a higher click on each bar's first beat. The click is
+  heard live only; it is never exported.
+*BPM*::
+  The tempo, from 20 to 999. Use the +/- buttons or type a value.
+*Snap*::
+  The grid that drawing, moving, resizing, pasting and quantizing use. See *SNAP VALUES*.
+Position::
+  _bar_:_beat_:_tick_ of the playing mode's playhead. Ticks run from 00 to 95.
+*Song* / *Clip*::
+  Selects what plays. *Clip* loops the current clip. *Song* plays the placements in the Song
+  window. Switching modes stops playback. Each mode keeps its own playhead.
+`Rhy:a/b Mldy:c/d`::
+  Channels in use right now: _a_ of the _b_ channels reserved for drums, and _c_ of the _d_
+  melodic channels. _b_ + _d_ is always 16.
+// src: src/slopmid.nim:6-46, src/player.nim:77-85
+
+=== SNAP VALUES
+
+[cols="1,1,3"]
+|===
+|Name |Ticks |Length
+
+|Bar |384 |one 4/4 bar
+|1/2 |192 |half note
+|1/3 |32 |a third of a beat (eighth-note triplet)
+|1/4 |96 |one beat
+|1/6 |16 |a sixth of a beat (sixteenth-note triplet)
+|1/8 |48 |eighth note
+|1/12 |8 |a twelfth of a beat
+|1/16 |24 |sixteenth note (the default)
+|1/24 |4 |a twenty-fourth of a beat
+|1/32 |12 |thirty-second note
+|1/48 |2 |a forty-eighth of a beat
+|1/64 |6 |sixty-fourth note
+|None |1 |no snapping
+|===
+
+Straight values are fractions of a whole note. Triplet values (1/3, 1/6, 1/12, 1/24, 1/48) are
+fractions of a beat. When a triplet snap is selected, the minor grid lines fall every third of a
+beat.
+// src: src/common.nim:13-27, src/pianoroll.nim:502, src/songwin.nim:168
+
+== CLIPS WINDOW
+
+The top row controls the current clip:
+
+*Clip* combo::
+  Picks the current clip. The current clip is the one that plays in Clip mode, the one the piano
+  roll edits, and the one the Song window's Draw tool places. Switching clips stops Clip-mode
+  playback, clears focus, and clears the old clip's mutes and solos.
+*Add*::
+  Appends an empty clip and makes it current.
+*Remove*::
+  Deletes the current clip and every placement of it. This button does nothing when only one clip
+  exists. Undo brings the clip back.
+*Duplicate*::
+  Appends a copy of the current clip, with its name, and makes the copy current.
+*Clip name*::
+  Up to 63 characters. A clip with no name is shown as `Clip` _N_.
+
+The timeline above the tracks shows the bars of the clip's loop. Click or drag on it to set the
+clip playhead.
+
+Each track row contains:
+
+*X*::
+  Deletes the track. This can be undone.
+*M* / *S*::
+  Mute and solo. When any track is soloed, only the soloed tracks play. Mutes and solos are not
+  saved, are not undone, and are cleared when the clip changes. They apply in both modes.
+Sound combo::
+  The 128 General MIDI programs as _bank_:_program_ _name_, plus *Rhythm*, which turns the track
+  into a drum track.
+*Bk#*::
+  The bank, from 0 to 127, sent as Bank Select (CC 0) before the program change. Greyed out on
+  drum tracks.
+*P#*::
+  The program, from 0 to 127. On a drum track, this program number is sent on the drum channel.
+Preview strip::
+  The track's notes drawn as small bars, with the playhead lines. Click the strip to focus the
+  track in the piano roll. The focused track's strip is blue-grey.
+
+*ADD*, under the table, appends a new track: program 0, bank 0, melodic.
+// src: src/clipswin.nim, src/edit.nim:277-291, src/common.nim:124-143
+
+== PIANO ROLL
+
+The piano roll edits the focused track. It is greyed out until a track has focus.
+
+=== Layout
+
+The tool buttons sit in the top-left corner: *Draw*, *Select* and *Bend*. The ruler runs along the
+top, the key column on the left, the note sheet in the middle and the lane at the bottom. There
+are scrollbars on the right and bottom.
+
+* *Ruler*: click or drag to set the clip playhead. Pasted notes land there. Bar numbers are drawn
+  on it, and an orange mark shows the clip's loop point.
+* *Key column*: note names, C-1 to G9. On a drum track, keys 35 to 81 show abbreviated GM drum
+  names. Click a key to hear it; the further right you click on the key, the higher the velocity.
+* *Sheet*: the notes. A note's brightness follows its velocity, and selected notes are yellow with
+  a white outline. When there is room, a note shows its name. Where two notes of the same pitch
+  overlap, the overlapping part is drawn bright red.
+* *Lane*: the *Vel*, *Vol*, *Exp* or *Pan* editor. Drag the border above it to resize it (10% to
+  90% of the height).
+
+In Song mode, the playhead shows as one line per placement of this clip that is playing. A fainter
+line marks the clip's own playhead, which is where pastes go.
+// src: src/pianoroll.nim:65-110, 462-583
+
+=== Draw tool
+
+* Left-click on empty space to add a note at the clicked pitch, starting at the snap line at or
+  before the mouse. The new note copies the length and velocity of the last note you clicked or
+  dragged. Keep holding to drag the new note into place.
+* Drag a note to move it, snapped. If the note is selected, the whole selection moves with it.
+* Drag the right edge of a note (the last 6 pixels) to resize it. A selected note resizes the whole
+  selection by the same amount. No note gets shorter than one snap.
+* Right-click a note to delete it. Hold the right button and sweep to delete several.
+* Placing or dragging a note plays it.
+
+=== Select tool
+
+* Drag on empty space to draw a box. On release, every note the box touches is selected, and all
+  others are deselected. Hold *Shift* to add to the selection instead.
+* Click a note to select only that note. *Shift+click* adds it to the selection. Clicking a note
+  that is already selected keeps the current selection, so you can drag the group.
+* Moving and resizing work as with the Draw tool.
+* Right-click does not delete in this tool.
+// src: src/pianoroll.nim:292-339, src/edit.nim:62-84, 295-315
+
+=== Bend tool
+
+Each note has its own pitch bend line, drawn from its start to its end. In this tool the notes
+themselves can't be edited.
+
+* Every note shows two end points, which can move only up and down, and any number of middle
+  points.
+* The vertical distance from the note's row is the bend in semitones. It is continuous, limited
+  to plus or minus 24. Horizontally, points move by the snap.
+* Click a note's line, or its body, to add a point at the snap line at that height.
+  *Ctrl+click* adds the point at zero bend.
+* Drag a point to move it. If the point is selected, the whole selection moves with it.
+* *Ctrl+click* a point to set it to zero bend. If it is selected, the whole selection goes to zero.
+* Right-click, or right-drag across, middle points to delete them. End points can't be deleted.
+* *Shift+click* adds a point to the selection. Drag on empty space to select points with a box.
+  *Ctrl+A* selects all points, or none. *Delete* removes the selected middle points.
+
+A track has one pitch wheel. When bent notes overlap on the same track, the note that started last
+controls the wheel. Lines and points that lose the wheel to another note are drawn black. To bend
+overlapping notes separately, put them on separate tracks.
+
+Note: selecting the Bend tool gives every note of the focused track its two flat end points. That
+counts as an edit, so it marks the song as changed and adds an undo step.
+// src: src/model.nim:13-14, 83-127, src/edit.nim:88-142, src/pianoroll.nim:111-115, 211-290, 535-550
+
+=== Vel lane
+
+Every note has a stem at its start, with a faint line along its length at its velocity's height.
+
+* Press on a stem, or on the faint line, and drag up or down to set the velocity, from 1 to 127.
+  While you drag, every stem the mouse crosses is set too.
+* If any notes are selected, the drag affects only selected notes.
+* Hover to see a tooltip listing each note under the mouse, for example `C4: 100 - 79%`.
+// src: src/pianoroll.nim:360-363, 423-434, 437-460
+
+=== Vol, Exp and Pan lanes
+
+Each track has three curves: *Vol* (CC 7, default 100), *Exp* (CC 11, default 127) and *Pan* (CC
+10, default 64, the centre). A curve ramps in straight lines between its points. It holds the
+first point's value before that point and the last point's value up to the loop point.
+
+* *Draw* tool: click on empty space to add a point at the snap line and drag it. Drag a point to
+  move it. Right-click or right-drag over points to delete them; the last point can't be deleted.
+* *Select* tool: click a point to select it (*Shift* adds), drag on empty space to box-select, and
+  drag a selected point to move the selection.
+* *Pan* only: *Ctrl+click* a point to centre it, or *Ctrl+click* the curve to add a centred point.
+  A white bar marks the centre. The tooltip reads `64 - Center`, `0 - 100% L` or `127 - 100% R`.
+* Points can't pass their neighbours, can't go before tick 0, and can't go past the loop point.
+* The resolution combo (`1/16`, `1/32`, `1/64` or `1/96`) sets how often a sloped curve is sent
+  while playing. It is saved per track. The default is `1/96`.
+
+A curve with no points is drawn as a single point at its default value. Opening the lane adds that
+point to the track, which counts as an edit.
+// src: src/model.nim:11-15, 70-81, src/edit.nim:146-183, src/pianoroll.nim:364-422
+
+=== Navigating
+
+These controls work the same in the piano roll and the Song window.
+
+[cols="1,2"]
+|===
+|Input |Effect
+
+|Wheel |Scroll up and down
+|Shift+wheel, horizontal wheel |Scroll in time
+|Middle-drag |Pan
+|Ctrl+middle-drag |Zoom around the mouse: right or up zooms in
+|Scrollbar thumb |Drag to scroll
+|Ends of the scrollbar thumb |Drag to zoom on that axis
+|===
+// src: src/view.nim:54-176
+
+== SONG WINDOW
+
+The Song window has 32 lanes. Each box in a lane is a *placement*: a clip played from a start time
+for a length. Placements in the same lane can't overlap. Each box is coloured by its clip and
+shows its clip name and a miniature of the clip's notes. White lines inside a box mark where the
+clip starts over.
+
+*Draw* tool::
+  Click empty space to place the current clip, starting at the snap line at or before the mouse.
+  The new placement is as long as the clip's loop, or shorter if the next placement in the lane
+  is closer. Keep holding to drag it into place. Right-click a placement to remove it.
+*Select* tool::
+  Drag a box to select placements. *Shift* adds to the selection. Click a placement to select it.
+Either tool::
+  * Click a placement to make its clip the current clip. In Song mode playback keeps going.
+  * Drag a placement to move it between times and lanes. If it is selected, the selection moves
+    with it.
+  * Drag a placement's right edge to change its length. Past the clip's loop, the clip repeats.
+    The right edges of all selected placements move by the same amount.
+  * Drag a placement's left edge to trim the start, so the clip begins part-way in. This moves
+    only the placement you grab.
+  * While a drag would overlap another placement, the moving placements turn red. Releasing there
+    puts them back where they were.
+Ruler::
+  Click or drag to set the song playhead.
+Lane headers::
+  The lane number, *M* (mute) and *S* (solo). The headers are hidden when the lanes are shorter
+  than 22 pixels.
+
+Song mode plays from the song playhead to the end of the last placement, then stops and rewinds to
+the start.
+// src: src/songwin.nim, src/edit.nim:187-273, src/player.nim:117-119, 212-216
+
+== EDIT COMMANDS
+
+Shortcuts work in the window that has keyboard focus; click a window to give it focus. The *Edit*
+menu applies to whichever of the piano roll or Song window you used last.
+
+[cols="2,1,3,3"]
+|===
+|Command |Keys |Piano roll |Song window
+
+|Undo / Redo |Ctrl+Z / Ctrl+Shift+Z, Ctrl+Y |any window |any window
+|Select all / none |Ctrl+A |notes, the lane's points, or bend points (see below) |placements
+|Duplicate |Ctrl+D |copies the selection right after its last note; not available in Bend |-
+|Copy |Ctrl+C |selected notes or curve points |selected placements
+|Cut |Ctrl+X |copy, then delete |copy, then delete
+|Paste |Ctrl+V |at the clip playhead, snapped |at the song playhead, snapped; cancelled if anything would overlap
+|Quantize |Ctrl+Q |selected notes' starts and ends to the snap, at least one snap long |the same for placements; a placement that would overlap is left alone
+|Delete |Delete |selected notes, curve points or bend points |selected placements
+|Transpose |Shift+Up / Shift+Down |the selection, or all notes if none is selected, by a semitone |-
+|Octave |Ctrl+Up / Ctrl+Down |the same, by an octave |-
+|===
+
+In the piano roll, Select all, Copy, Cut, Paste and Delete act on what you clicked last. After a
+click in a *Vol*, *Exp* or *Pan* lane they act on that curve's points; after a click in the sheet or
+the *Vel* lane they act on notes. A paste only takes what the last copy took: curve points paste
+only into a curve lane, notes only into the sheet. A curve paste replaces the existing points in
+the span it covers.
+
+With the Bend tool selected, only Select all and Delete act on the sheet, and they act on bend
+points. Duplicate, Quantize, Transpose and note Copy, Cut and Paste are off.
+
+A group that is moved or transposed stops at the edge (tick 0, pitch 0 or 127, lane 1 or 32) and
+keeps its shape.
+
+When a fine snap (finer than 1/16) would leave a duplicate just short of the next bar line, the
+duplicate starts on the bar line instead.
+// src: src/slopmid.nim:74-92, src/common.nim:62-66, src/pianoroll.nim:117-149, src/songwin.nim:72-85, src/edit.nim:16-60, 199-217
+
+== PLAYBACK AND CHANNEL ALLOCATION
+
+Each note asks for a channel when it starts:
+
+. If its track already has a note sounding, the note uses that track's channel.
+. Otherwise a melodic track takes the lowest free channel that isn't reserved for drums. A drum
+  track takes the first free drum channel, or shares the last drum channel if all are busy.
+. If the channel last played a different bank or program, slopmid sends a bank select and program
+  change first. It also sends the track's Vol, Exp and Pan values and its bend, if they differ
+  from what the channel has.
+. When no channel is free, the note is dropped.
+
+A channel becomes free when its last note ends.
+
+*Drum channels.* Channel 10 is always a drum channel. When playback starts, slopmid counts the
+most drum tracks that can sound at once. In Song mode, that is the largest total across
+overlapping audible placements. For each drum track beyond the first, it reserves one more drum
+channel, in the order 16, 15, 14, 13, 12, 11, turning each into a drum part with the GS *USE FOR
+RHYTHM PART* message. Each reserved channel leaves one fewer channel for melodic tracks.
+
+The reservation is fixed while playback runs, because the GS message cuts every sounding note. If
+you add a drum track during playback, it shares a drum channel until you pause and play again.
+// src: src/player.nim:6-7, 45-75, 96-131, 253-284
+
+*Pitch bend.* The bend range of every channel is set to 24 semitones (RPN 0) the first time that
+channel bends. The wheel returns to centre when the channel's last note ends.
+// src: src/model.nim:13, src/player.nim:224-231, 251-252
+
+*Curves.* A track's curves are sent only on the channels it is sounding on, at most once per
+resolution step and only when the value changes. A track sends a curve only if that curve has
+points.
+// src: src/player.nim:183-192, 236-245
+
+*Previews.* Clicked keys and dragged notes play on a second synth instance, so previews never take
+a channel from the song.
+// src: src/audio.nim:20, src/model.nim:9, src/pianoroll.nim:341-358
+
+*Audio.* slopgs renders 16-bit stereo at 22050 Hz in blocks of 1024 frames through SDL2. Its sounds
+come from a gm.dls built into the program.
+// src: src/wrap/slopgs.nim:19-21, 35-49, src/audio.nim:59-64
+
+== FILES
+
+=== File menu
+
+[cols="2,1,4"]
+|===
+|Item |Keys |Action
+
+|New |Ctrl+N |Starts an empty song at 120 BPM, after asking about unsaved changes
+|Open... |Ctrl+O |Opens an `.smm` file, after asking about unsaved changes
+|Save |Ctrl+S |Saves to the current file, or asks for a name the first time
+|Save as... |Ctrl+Shift+S |Saves under a new name
+|Export MIDI... |Ctrl+E |Writes a `.mid` file
+|Export WAV... |- |Writes a `.wav` file
+|Exit |- |Quits, after asking about unsaved changes
+|===
+
+When there are unsaved changes, New, Open and Exit ask *Save changes?* with *Save*, *Don't save*
+and *Cancel*. If you choose *Save* for a song that has no file name yet, you pick a name first. The
+file dialogs add `.smm`, `.mid` or `.wav` when the name doesn't end with it. The file shortcuts
+don't work while a popup is open or while you are typing in a text field.
+
+Opening a file clears the undo history.
+// src: src/slopmid.nim:56-73, src/files.nim
+
+=== The .smm format
+
+An `.smm` file is plain text with one record per line. The first word of each line names the
+record. Ticks are 96 per beat. Each `note`, `bend` and `cc` line belongs to the most recent `track`
+line, and each `track` line belongs to the most recent `clip` line.
+
+----
+bpm <tempo>                              20 to 999
+clip [<name>]                            the rest of the line is the name
+track <bank> <program> <res> <rhythm>    res: 0..3 = 1/16, 1/32, 1/64, 1/96; rhythm: 0 or 1
+note <start> <len> <pitch> <vel>         len > 0; pitch and vel 0..127
+bend <t> <v> <t> <v> ...                 the previous note's bend points; v in semitones
+cc <curve> <t> <v> ...                   curve: 0 vol, 1 exp, 2 pan
+place <clip> <lane> <start> <len> <offset>   clip index from 0, lane 0..31
+----
+
+In a `bend` record, the first pair is the note's start and the last pair is its end; their `t`
+values are ignored. The middle pairs count ticks from the note's start.
+
+A file with no `clip` line, with an unknown record, or with a placement of a clip that doesn't
+exist is rejected with a *File error*. Mutes, solos, selections and the layout are not saved.
+// src: src/smm.nim, src/model.nim:25
+
+=== MIDI export
+
+The export is a type 1 Standard MIDI File at 96 ticks per beat. It contains exactly what playback
+would send in the current mode: the arrangement in Song mode, or one pass of the current clip in
+Clip mode. Muted tracks and lanes are left out, and the channel choices are the same as during
+playback.
+
+Track 1 holds the tempo and a 4/4 time signature. If extra drum channels are needed, it also holds
+a GS reset and the rhythm-part messages at tick 0. Each channel that plays a note gets a track of
+its own. Redundant controller messages are removed; the file sounds the same.
+// src: src/smf.nim:21-107
+
+=== WAV export
+
+The WAV export covers the same material as the MIDI export. slopgs renders it with a fresh synth
+instance on a background thread, faster than real time. The file is 16-bit stereo at 22050 Hz,
+without the metronome, plus two seconds at the end for notes to fade out. A progress popup shows
+while it renders.
+// src: src/audio.nim:74-136
+
+== UNDO
+
+Each edit becomes one undo step when you release the mouse button or leave a text field. A whole
+drag is therefore one step. Undo covers clips, tracks, notes, curves, bends and placements.
+
+Undo does not cover the tempo, mutes, solos or selections. Undo or redo also empties the Song
+window's clipboard.
+// src: src/history.nim
+
+== LIMITS AND QUIRKS
+
+* 4/4 time only, and one tempo for the whole song.
+* 32 lanes. At most 16 tracks can sound at once, because each sounding track holds one channel.
+  Every reserved drum channel is a channel melodic tracks can't use. When every channel is busy,
+  new notes on melodic tracks are dropped.
+* A clip's loop point is the end of the last bar that has a note, and a clip is at least one bar
+  long. Curve points can't be placed past the loop point.
+* Closing the window through the window manager quits without asking about unsaved changes. Use
+  *File > Exit* instead.
+* The window layout and the open file are not remembered between runs.
+* Opening the Bend tool, or a curve lane on a track without points, adds default points. This marks
+  the song as changed.
+* slopmid has no MIDI input or output ports and no MIDI import. Sound comes only from the built-in
+  slopgs synth.
+// src: src/model.nim:7-10, 63-68, src/wrap/gui.nim:65-66, 83-88, src/files.nim:65-67
+
+== BUILDING
+
+You need Nim 2.2.10 or later (C++ backend), the SDL2 development files and the git submodules
+(`deps/slopgs`, `deps/imgui-filebrowser`). Restore the Nim dependencies with `atlas rep`.
+
+----
+make linux      # ./slopmid, stripped
+make windows    # slopmid.exe, cross-built with mingw; SDL2 linked statically
+make            # both
+----
+
+The Windows build needs `SDL2_MINGW` set to the `x86_64-w64-mingw32` directory of the SDL2 mingw
+development package. Build with `-d:dlsPath=<file>` to embed a different `gm.dls`.
+
+The editing, playback and file modules have built-in self-checks. Run them with, for example,
+`nim r src/edit.nim`. The modules with checks are `model`, `edit`, `player`, `smf`, `smm` and
+`view`.
+
+`python3 tools/mid2svg.py` _in_.mid _out_.svg draws an exported MIDI file as an SVG piano roll,
+coloured by channel, for checking exports.
+// src: Makefile, slopmid.nimble, config.nims, .gitignore:1, src/wrap/slopgs.nim:35-38, tools/mid2svg.py
+
+== SEE ALSO
+
+The slopgs synthesizer: https://github.com/sloptainment/slopgs
