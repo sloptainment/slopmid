@@ -31,7 +31,10 @@ proc audioLoop() {.thread.} =
         for (status, d1, d2) in previews:
           slopgs.midi(previewSynth, 0, status, d1, d2)
         previews.setLen(0)
-        for m in playback.advance(song, BlockFrames, Rate):
+        let msgs = playback.advance(song, BlockFrames, Rate)
+        for r in playback.rhythm:
+          slopgs.sysex(synth, rhythmSysex(r.part, r.on))
+        for m in msgs:
           slopgs.midi(synth, m.offset, m.status, m.d1, m.d2)
         slopgs.render(synth, buf)
         slopgs.render(previewSynth, pbuf)

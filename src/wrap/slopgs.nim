@@ -52,5 +52,9 @@ proc midi*(s: Synth, offset, status, d1, d2: int) =
   synth_midi(s, status.uint32, d1.uint32, d2.uint32)
   voice_set_event_offset(s, 0)
 
+proc sysex*(s: Synth, msg: string) =
+  ## A SysEx, `msg` the bytes after F0 up to and including F7.
+  synth_sysex(s, cast[ptr uint8](msg[0].unsafeAddr), msg.len.uint32)
+
 proc render*(s: Synth, buf: var Block) =
   render_frames(s, buf[0].addr, BlockFrames)

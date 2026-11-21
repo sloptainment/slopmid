@@ -33,6 +33,12 @@ proc toMidi*(song: Song): string =
   let frames = max(1, round(endTick.float * fpt).int)
   # ponytail: one block for the whole song; its events are at integer ticks, so rounding back is exact
   var msgs = pl.advance(s, frames, SampleRate)
+  var sysex = "" ## the rhythm parts, set up at tick 0 on a GS reset; none when only the drums are
+  for r in pl.rhythm:
+    let x = rhythmSysex(r.part, r.on)
+    sysex.add "\0\xF0" & vlq(x.len) & x
+  if sysex.len > 0:
+    sysex = "\0\xF0" & vlq(GsReset.len) & GsReset & sysex
   s.playing = false
   var tail = pl.advance(s, 1, SampleRate) # releases what still sounds, at the end
   for m in tail.mitems:
@@ -92,7 +98,7 @@ proc toMidi*(song: Song): string =
   let us = round(60_000_000 / s.bpm).int
   let tempo = "\0\xFF\x51\x03" & char(us shr 16) & char((us shr 8) and 255) & char(us and 255) &
     "\0\xFF\x58\x04\4\2\x18\8" # 4/4
-  var body = chunk("MTrk", tempo & "\0\xFF\x2F\0")
+  var body = chunk("MTrk", tempo & sysex & "\0\xFF\x2F\0")
   var n = 1
   for ch in 0 .. 15:
     if used[ch]:
@@ -127,3 +133,11 @@ when isMainModule:
   s.songMode = false
   doAssert s.toMidi.len == m.len
   echo "smf: ok"
+  # two rhythm tracks at once: channel 16 (Part 15) is made a rhythm part after a GS reset, in the tempo track
+  var d = Song(bpm: 120, songMode: true, clips: @[Clip(tracks: @[Track(rhythm: true), Track(rhythm: true, program: 16)])])
+  for t in 0 .. 1:
+    d.clips[0].tracks[t].notes = @[Note(start: 0, len: 24, pitch: 36 + t, vel: 90)]
+  d.placements = @[Placement(clip: 0, start: 0, len: BarTicks)]
+  let dm = d.toMidi
+  doAssert "\0\xF0\x0A" & GsReset in dm and "\0\xF0\x0A\x41\x10\x42\x12\x40\x1F\x15\x01\x0B\xF7" in dm
+  doAssert "\x99\x24\x5A" in dm and "\x9F\x25\x5A" in dm

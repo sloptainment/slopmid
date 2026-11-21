@@ -3,6 +3,10 @@
 import std/[algorithm, math, sequtils]
 import model
 
+const
+  RhythmCh* = [Drums, 15, 14, 13, 12, 11, 10] ## channels rhythm tracks take, in order: the drums, then 16 down to 11
+  GsReset* = "\x41\x10\x42\x12\x40\x00\x7F\x00\x41\xF7" ## the SysEx after F0
+
 type
   Src = object ## a placement playing in this block
     p: Placement
@@ -25,6 +29,9 @@ type
     sentCc: array[3, array[16, int]] ## value + 1 last sent per curve and channel, 0 = none
     sentBend: array[16, int] ## bend last sent per channel, minus `BendMid`: 0 = centre or none
     bendSet: array[16, bool] ## the channel has had its bend range set
+    rhythm*: seq[tuple[part: int, on: bool]] ## USE FOR RHYTHM PART changes for the last `advance`d block, to send before its messages
+    extra: int ## rhythm channels beyond `Drums` the synth has set: `RhythmCh[0 .. extra]`
+    started: bool ## the last block was playing
 
 proc hasBend(t: Track): bool =
   t.notes.anyIt(it.bend.anyIt(it.v != 0))
@@ -34,6 +41,38 @@ proc audible(ts: seq[Track], i: int): bool =
 
 proc laneAudible(s: Song, l: int): bool =
   not s.laneMute[l] and (s.laneSolo[l] or not s.laneSolo.anyIt(it))
+
+proc rhythmSysex*(part: int, on: bool): string =
+  ## USE FOR RHYTHM PART (`40 1n 15`) for Part `part`, the SysEx after F0. It stops every note and
+  ## resets every channel's controllers; bank and program stay.
+  let body = [0x40, 0x10 + part, 0x15, on.int]
+  result = "\x41\x10\x42\x12"
+  for b in body:
+    result.add char(b)
+  result.add char((128 - body.sum mod 128) mod 128)
+  result.add "\xF7"
+
+proc rhythmCount(c: Clip): int =
+  for i, t in c.tracks:
+    if t.rhythm and t.notes.len > 0 and c.tracks.audible(i):
+      inc result
+
+proc rhythmPeak(s: Song): int =
+  ## The most rhythm tracks that can sound at once: an upper bound, as a track only holds a channel
+  ## while a note sounds. Song mode: the largest sum over overlapping audible placements.
+  if not s.songMode:
+    return s.clips[s.clip].rhythmCount
+  var edges: seq[tuple[tick, d: int]] ## a placement's end sorts before a start at the same tick
+  for p in s.placements:
+    if s.laneAudible(p.lane):
+      let n = s.clips[p.clip].rhythmCount
+      edges.add (p.start, n)
+      edges.add (p.start + p.len, -n)
+  edges.sort
+  var cur = 0
+  for e in edges:
+    cur += e.d
+    result = max(result, cur)
 
 proc soundIdx(pl: Player, src, track, pitch: int): int =
   for i, x in pl.sounding:
@@ -49,8 +88,10 @@ proc advance*(pl: var Player, s: var Song, frames, rate: int): seq[Msg] =
   ## loops the clip; song mode plays every placement, repeating a clip that is
   ## longer than its loop, and stops at the last one's end. Each note
   ## takes its track's channel if the track already sounds, else the lowest
-  ## free one (rhythm tracks: `Drums`), after a bank/program change if that
-  ## channel last had another. The channel frees at the note's off.
+  ## free one (rhythm tracks: the first free of `RhythmCh`, the last if all are busy), after a
+  ## bank/program change if that channel last had another. The channel frees at the note's off.
+  ## When playback starts, the channels `RhythmCh` gives to the most rhythm tracks sounding at once
+  ## are made rhythm parts (`pl.rhythm`); they never change while it plays, as each cuts every note.
   var evs: seq[Ev]
   var srcs: seq[Src] # clip mode: one, endless
   template clipOf(si: int): untyped =
@@ -67,7 +108,17 @@ proc advance*(pl: var Player, s: var Song, frames, rate: int): seq[Msg] =
     s.playing = false
     s.pos = 0
   pl.clicks.setLen 0
+  pl.rhythm.setLen 0
   if s.playing:
+    if not pl.started:
+      pl.started = true
+      let extra = clamp(s.rhythmPeak - 1, 0, RhythmCh.high)
+      for i in 1 .. RhythmCh.high:
+        if (i <= extra) != (i <= pl.extra):
+          pl.rhythm.add (RhythmCh[i], i <= extra) # channels 11-16 are Parts 10-15
+      if pl.rhythm.len > 0:
+        reset pl.sentCc # the synth reset every channel's controllers
+      pl.extra = extra
     let fpt = rate.float / (s.bpm / 60 * Ppq) # frames per tick
     var a = s.pos
     if s.songMode:
@@ -157,6 +208,7 @@ proc advance*(pl: var Player, s: var Song, frames, rate: int): seq[Msg] =
       let lend = clipOf(0).loopEnd.float
       s.pos = if b >= lend: b - lend else: b
   else:
+    pl.started = false
     for (si, ti, p, _) in pl.sounding:
       evs.add Ev(src: si, track: ti, pitch: p)
   template sendBend(ch, at, v: int) =
@@ -196,10 +248,14 @@ proc advance*(pl: var Player, s: var Song, frames, rate: int): seq[Msg] =
       let tr = tracks(e.src)[e.track]
       if ch < 0:
         if tr.rhythm:
-          ch = Drums
+          ch = RhythmCh[pl.extra] # all busy: share the last
+          for c in RhythmCh[0 .. pl.extra]:
+            if pl.sounding.allIt(it.ch != c):
+              ch = c
+              break
         else:
           for c in 0 .. 15:
-            if c != Drums and pl.sounding.allIt(it.ch != c):
+            if c notin RhythmCh[0 .. pl.extra] and pl.sounding.allIt(it.ch != c):
               ch = c
               break
       if ch < 0: # all channels busy: the note is dropped
@@ -304,6 +360,37 @@ when isMainModule:
   var pr: Player
   r.nt = @[Note(start: 0, len: Ppq, pitch: 36, vel: 100)]
   doAssert pr.advance(r, 1024, 22050)[^1] == (0, 0x99, 36, 100).Msg
+  # two rhythm tracks at once: the second takes channel 16, made a rhythm part (Part 15) at the start
+  var rr = Song(bpm: 120, playing: true, clips: @[Clip(tracks: @[Track(rhythm: true), Track(rhythm: true, program: 16)])])
+  var prr: Player
+  for t in 0 .. 1:
+    rr.clips[0].tracks[t].notes = @[Note(start: 0, len: Ppq, pitch: 36 + t, vel: 100)]
+  let rm = prr.advance(rr, 1024, 22050)
+  doAssert prr.rhythm == @[(15, true)] and (0, 0x99, 36, 100).Msg in rm and (0, 0x9F, 37, 100).Msg in rm, $rm
+  doAssert rhythmSysex(15, true) == "\x41\x10\x42\x12\x40\x1F\x15\x01\x0B\xF7"
+  # nothing flips while it plays: a third rhythm track added now shares the last channel
+  rr.clips[0].tracks.add Track(rhythm: true, notes: @[Note(start: 12, len: Ppq, pitch: 38, vel: 100)])
+  let rm3 = prr.advance(rr, 1024, 22050)
+  doAssert prr.rhythm.len == 0 and (rr.clips[0].tracks.len == 3) and 0x9F in rm3.mapIt(it.status), $rm3
+  # melodic tracks keep off both rhythm channels
+  rr.clips[0].tracks.add Track(notes: @[Note(start: 24, len: Ppq, pitch: 60, vel: 100)])
+  doAssert 0x90 in prr.advance(rr, 1024, 22050).mapIt(it.status)
+  # pause and play again with one rhythm track fewer: channel 16 is melodic again
+  rr.playing = false
+  discard prr.advance(rr, 1024, 22050)
+  rr.clips[0].tracks.setLen 1
+  rr.playing = true
+  rr.clipPos = 0
+  discard prr.advance(rr, 1024, 22050)
+  doAssert prr.rhythm == @[(15, false)]
+  # two rhythm tracks leave 14 channels for melodic ones: 16 tracks fill 16 different channels
+  var mx = Song(bpm: 120, playing: true, clips: @[Clip(tracks: newSeq[Track](16))])
+  var pmx: Player
+  for t in 0 ..< 16:
+    mx.clips[0].tracks[t].rhythm = t < 2
+    mx.clips[0].tracks[t].notes = @[Note(start: 0, len: Ppq, pitch: 60 + t, vel: 100)]
+  let cx = pmx.advance(mx, 1024, 22050).filterIt(it.status shr 4 == 9).mapIt(it.status and 15)
+  doAssert cx.deduplicate.len == 16, $cx
   # 15 simultaneous melodic tracks fill every channel but the drums, including 15
   var m = Song(bpm: 120, playing: true, clips: @[Clip(tracks: newSeq[Track](16))])
   var pm: Player
