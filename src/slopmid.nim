@@ -1,12 +1,7 @@
-## slopmid: a one-channel piano roll on slopgs, fixed at program 0
-## (Acoustic Grand Piano). Nothing is saved.
-##
-##   nim c -o:slopmid src/slopmid.nim   (Nim 2.2.12; deps/ is the Atlas workspace)
-##   ./slopmid [gm.dls]                 (default: deps/slopgs/dist/gm.dls)
-##
 ## Sheet: left-click adds a note or drags it, its right end resizes it,
 ## right-click deletes. Note names: click to audition. Velocity lane: drag.
 ## Wheel scrolls pitch, Shift+wheel scrolls time. Space plays/pauses.
+
 import std/[locks, os, strformat]
 import imgui
 import wrap/[alsa, gui, slopgs]
@@ -239,14 +234,25 @@ proc pianoRoll() =
   dl.addLine(v2(px, origin.y), v2(px, bottom), rgb(255, 255, 255, 180))
   dl.popClipRect()
 
+var togglePianoRoll = true
+
 proc ui() =
   let vp = igGetMainViewport()
   igSetNextWindowPos(v2(vp.workPos.x, vp.workPos.y))
   igSetNextWindowSize(v2(vp.workSize.x, vp.workSize.y))
   if igBegin("slopmid", nil, ImGuiWindowFlags.NoDecoration or ImGuiWindowFlags.NoMove or
              ImGuiWindowFlags.NoSavedSettings or ImGuiWindowFlags.NoScrollWithMouse):
+    if igBeginMainMenuBar():
+      if igBeginMenu("Window"):
+        if igCheckbox("Piano roll", addr togglePianoRoll):
+          discard
+        igEndMenu()
+      igEndMainMenuBar()
     transport()
-    pianoRoll()
+    if togglePianoRoll:
+      if igBegin("Piano roll"):
+        pianoRoll()
+      igEnd()
   igEnd()
 
 proc main() =
