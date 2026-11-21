@@ -114,6 +114,7 @@ var
   tool = Draw
   boxA: ImVec2 # where the selection box started, relative to the scrolled sheet
   dragNote, grabTicks: int
+  velLine: seq[int] # notes whose velocity line was clicked, kept for the drag
   previewKey = -1
   focusTrack = -1 # in clip song.clip; -1 = none
   noTrack: Track # stands in for the focused track while there is none
@@ -452,6 +453,7 @@ proc pianoRoll() =
   discard igInvisibleButton("vel", v2(gridW, velH))
   let velHeld = igIsItemActive()
   let velHovered = igIsItemHovered()
+  let velDown = igIsItemActivated()
 
   if keysHovered or sheetHovered or igIsItemHovered():
     if io.keyShift:
@@ -582,11 +584,19 @@ proc pianoRoll() =
     previewKey = key
 
   # dragging in the velocity lane sets the selected notes (all, if none) whose bar is under the mouse
+  let onLine = proc(n: Note): bool = # the faint line across the note's length
+    mouse.x >= tickX(n.start.float) and mouse.x <= tickX(float(n.start + n.len)) and
+      abs(bottom - float32(n.vel) / 127 * velH - mouse.y) <= 4
+  if velDown:
+    velLine.setLen 0
+    for i, n in cur().notes:
+      if onLine(n):
+        velLine.add i
   if velHeld:
     let v = clamp(int((bottom - mouse.y) / velH * 127), 1, 127)
     let anySel = cur().notes.anyIt(it.sel)
-    for n in cur().notes.mitems:
-      if (n.sel or not anySel) and abs(tickX(n.start.float) - mouse.x) <= 4:
+    for i, n in cur().notes.mpairs:
+      if (n.sel or not anySel) and (abs(tickX(n.start.float) - mouse.x) <= 4 or i in velLine):
         n.vel = v
         lastVel = v
 
@@ -599,7 +609,7 @@ proc pianoRoll() =
     else:
       let anySel = cur().notes.anyIt(it.sel)
       for n in cur().notes:
-        if (n.sel or not anySel) and abs(tickX(n.start.float) - mouse.x) <= 4:
+        if (n.sel or not anySel) and (abs(tickX(n.start.float) - mouse.x) <= 4 or onLine(n)):
           lines.add noteName(n.pitch) & ": " & line(n.vel)
     if lines.len > 0:
       igSetTooltip("%s", cstring(lines.join("\n")))
