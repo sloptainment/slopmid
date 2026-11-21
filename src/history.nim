@@ -42,6 +42,7 @@ proc restore(s: Snapshot) =
   if focusTrack >= song.clips[song.clip].tracks.len:
     focusTrack = -1
   clicked = -1
+  placeClip.setLen 0 # its clip numbers may be stale
 
 proc resetHistory*() =
   ## A fresh history, starting from the song as it is.
