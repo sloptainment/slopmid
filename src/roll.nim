@@ -21,7 +21,7 @@ type
   Track* = object
     notes*: seq[Note]
     bank*, program*: int
-    cc*: array[2, seq[tuple[t, v: int]]] ## per curve (`CcNum`): points by tick, ramped between; held outside the first and last
+    cc*: array[2, seq[tuple[t, v: int, sel: bool]]] ## per curve (`CcNum`): points by tick, ramped between; held outside the first and last; `sel` is the editor's selection
     ccRes*: int ## index into `CcSteps`
     rhythm*: bool ## plays on the drum channel
     mute*, solo*: bool ## transient, cleared when the clip changes
@@ -390,7 +390,7 @@ when isMainModule:
   let looped = g.play.filterIt(it[1].status shr 4 == 9).mapIt((it[0], it[1].offset))
   doAssert looped == @[(21, 546), (64, 614)], $looped
   # volume: ramps 0 -> 127 over the first beat, held after; one CC 7 per 1/16 (24 ticks)
-  let ramp = Track(cc: [@[(0, 0), (96, 127)], @[]])
+  let ramp = Track(cc: [@[(0, 0, false), (96, 127, false)], @[]])
   doAssert (ramp.ccAt(0, 0), ramp.ccAt(0, 48), ramp.ccAt(0, 96), ramp.ccAt(0, 500)) == (0, 64, 127, 127)
   var v = Song(bpm: 120, playing: true, clips: @[@[ramp]])
   v.nt = @[Note(start: 0, len: BarTicks, pitch: 60, vel: 100)]
@@ -399,7 +399,7 @@ when isMainModule:
     vols.add v.advance(1024, 22050).filterIt(it.status == 0xB0 and it.d1 == 7).mapIt(it.d2)
   doAssert vols == @[0, 32, 64, 95, 127], $vols # steps at ticks 0, 24, 48, 72, 96; none after
   # expression is its own curve on CC 11, independent of volume
-  v = Song(bpm: 120, playing: true, clips: @[@[Track(cc: [@[], @[(0, 127), (96, 0)]])]])
+  v = Song(bpm: 120, playing: true, clips: @[@[Track(cc: [@[], @[(0, 127, false), (96, 0, false)]])]])
   v.nt = @[Note(start: 0, len: BarTicks, pitch: 60, vel: 100)]
   var exps: seq[int]
   for blk in 0 ..< 40:

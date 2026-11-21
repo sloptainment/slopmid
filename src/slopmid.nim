@@ -1,6 +1,6 @@
 ## Sheet: left-click adds a note or drags it, its right end resizes it,
 ## right-click deletes. Note names: click to audition. Velocity lane: drag.
-## Select tool (corner buttons): drag a box to select, drag a selected note to move them all, Delete removes them; Ctrl+A selects all (or deselects, if anything is selected), Ctrl+D duplicates the selection after its last note, Ctrl+Q quantizes the selection's starts and ends to the snap.
+## Select tool (corner buttons): drag a box to select (in the Vol/Exp lane: curve points; Shift adds), drag a selected note to move them all, Delete removes them; Ctrl+A selects all (or deselects, if anything is selected), Ctrl+D duplicates the selection after its last note, Ctrl+Q quantizes the selection's starts and ends to the snap.
 ## Ctrl+C copies the selection, Ctrl+V pastes it as a group at the playhead set on the ruler, rounded to the snap.
 ## Wheel scrolls pitch, Shift+wheel scrolls time, middle-drag pans, Ctrl+middle-drag zooms. Space plays/pauses.
 
@@ -109,6 +109,7 @@ var
   scrollY = float32(127 - 84) * keyH # C6 at the top
   velMode = 0 # velocity lane's combo: Vel, Vol, Exp; a curve's index in `Track.cc` is velMode - 1
   volDrag = -1 # index of the curve point being dragged
+  ptBoxA: ImVec2 # where the lane's selection box started, relative to the scrolled lane
   velFrac = 0.25f32 # share of the sheet+velocity height taken by the velocity lane
   sbGrab: ScrollGrab
   sbOff: float32
@@ -384,7 +385,7 @@ proc pianoRoll() =
 
   toolButtons(tool, origin)
 
-  if igIsWindowFocused() and io.keyCtrl and igIsKeyPressed(ImGuiKey.A, false) and not io.wantTextInput:
+  if velMode == 0 and igIsWindowFocused() and io.keyCtrl and igIsKeyPressed(ImGuiKey.A, false) and not io.wantTextInput:
     let all = not cur().notes.anyIt(it.sel) # anything selected: deselect instead
     for n in cur().notes.mitems:
       n.sel = all
@@ -457,6 +458,7 @@ proc pianoRoll() =
   let velHeld = igIsItemActive()
   let velHovered = igIsItemHovered()
   let velDown = igIsItemActivated()
+  let velUp = igIsItemDeactivated()
 
   igSetCursorScreenPos(v2(origin.x + 2, velTop + 10))
   igSetNextItemWidth(KeyW - 4)
@@ -578,7 +580,7 @@ proc pianoRoll() =
         m.len += d
     lastLen = cur().notes[dragNote].len
   of Idle:
-    if igIsWindowFocused() and igIsKeyPressed(ImGuiKey.Delete, false) and not io.wantTextInput:
+    if velMode == 0 and igIsWindowFocused() and igIsKeyPressed(ImGuiKey.Delete, false) and not io.wantTextInput:
       cur().notes.keepItIf(not it.sel)
     elif tool == Draw and sheetHovered and igIsMouseDown(ImGuiMouseButton.Right) and hit >= 0:
       cur().notes.delete hit
@@ -614,12 +616,27 @@ proc pianoRoll() =
         return i
   let volVal = proc(): int = clamp(int((bottom - mouse.y) / valH * 127), 0, 127)
   let loopT = song.clips[song.clip].loopEnd
+  if velMode > 0 and igIsWindowFocused() and not io.wantTextInput:
+    if io.keyCtrl and igIsKeyPressed(ImGuiKey.A, false):
+      let all = not pts.anyIt(it.sel) # anything selected: deselect instead
+      for p in pts.mitems:
+        p.sel = all
+    if igIsKeyPressed(ImGuiKey.Delete, false):
+      pts.keepItIf(not it.sel)
   if velMode > 0:
     if pts.len == 0: # the default, as a point at the start
-      pts.add (0, CcDefault[velMode - 1])
+      pts.add (0, CcDefault[velMode - 1], false)
     if velDown:
       volDrag = volHit()
-      if volDrag < 0: # a click on empty space adds a point, at the snap
+      if tool == Select:
+        if volDrag >= 0 and not pts[volDrag].sel: # a selected point keeps the group
+          if not io.keyShift:
+            for p in pts.mitems:
+              p.sel = false
+          pts[volDrag].sel = true
+        elif volDrag < 0: # empty space: a box
+          ptBoxA = v2(mouse.x - gridX + scrollX, mouse.y)
+      elif volDrag < 0: # a click on empty space adds a point, at the snap
         let t = min(snap(xTick(mouse.x), grid), loopT)
         volDrag = pts.len
         for i, p in pts:
@@ -629,12 +646,31 @@ proc pianoRoll() =
         if volDrag < pts.len and pts[volDrag].t == t: # that tick has one: take it
           pts[volDrag].v = volVal()
         else:
-          pts.insert((t, volVal()), volDrag)
+          pts.insert((t, volVal(), false), volDrag)
+    let (bx0, bx1) = (min(ptBoxA.x + gridX - scrollX, mouse.x), max(ptBoxA.x + gridX - scrollX, mouse.x))
+    let (by0, by1) = (min(ptBoxA.y, mouse.y), max(ptBoxA.y, mouse.y))
+    if tool == Select and volDrag < 0 and velUp: # a box ends: the points in it get selected
+      for i, p in pts:
+        let (x, y) = (tickX(p.t.float), bottom - float32(p.v) / 127 * valH)
+        if x >= bx0 and x <= bx1 and y >= by0 and y <= by1:
+          pts[i].sel = true
+        elif not io.keyShift:
+          pts[i].sel = false
     if velHeld and volDrag in 0 ..< pts.len:
-      let vol = pts
-      let lo = if volDrag > 0: vol[volDrag - 1].t + 1 else: 0
-      let hi = if volDrag < vol.high: vol[volDrag + 1].t - 1 else: loopT
-      pts[volDrag] = (clamp(snap(xTick(mouse.x), grid), lo, hi), volVal())
+      # the dragged point, or in Select its whole selection, moves by the same ticks and values
+      let inGroup = proc(i: int): bool = i == volDrag or (tool == Select and pts[i].sel)
+      var dt = clamp(snap(xTick(mouse.x), grid), 0, loopT) - pts[volDrag].t
+      var dv = volVal() - pts[volDrag].v
+      for i, p in pts: # the group stops at its neighbours and the edges, keeping its shape
+        if inGroup(i):
+          if i > 0 and not inGroup(i - 1): dt = max(dt, pts[i - 1].t + 1 - p.t)
+          if i < pts.high and not inGroup(i + 1): dt = min(dt, pts[i + 1].t - 1 - p.t)
+          dt = clamp(dt, -p.t, max(0, loopT - p.t))
+          dv = clamp(dv, -p.v, 127 - p.v)
+      for i in 0 .. pts.high:
+        if inGroup(i):
+          pts[i].t += dt
+          pts[i].v += dv
     if velHovered and igIsMouseDown(ImGuiMouseButton.Right): # dragging deletes; the last point stays
       let h = volHit()
       if h >= 0 and pts.len > 1:
@@ -756,12 +792,17 @@ proc pianoRoll() =
   if velMode > 0:
     dl.pushClipRect(v2(gridX, velTop), v2(right, bottom), true)
     let col = rgb(110, 210, 110)
-    let pt = proc(p: tuple[t, v: int]): ImVec2 = v2(tickX(p.t.float), bottom - float32(p.v) / 127 * valH)
+    let pt = proc(p: tuple[t, v: int, sel: bool]): ImVec2 = v2(tickX(p.t.float), bottom - float32(p.v) / 127 * valH)
     for i, p in pts:
       if i > 0:
         dl.addLine(pt(pts[i - 1]), pt(p), col, 2)
     for p in pts:
-      dl.addCircleFilled(pt(p), 4, col)
+      dl.addCircleFilled(pt(p), 4, if p.sel: rgb(255, 255, 85) else: col)
+    if tool == Select and velHeld and volDrag < 0:
+      let (bx0, bx1) = (min(ptBoxA.x + gridX - scrollX, mouse.x), max(ptBoxA.x + gridX - scrollX, mouse.x))
+      let (by0, by1) = (min(ptBoxA.y, mouse.y), max(ptBoxA.y, mouse.y))
+      dl.addRectFilled(v2(bx0, by0), v2(bx1, by1), rgb(66, 150, 250, 50))
+      dl.addRect(v2(bx0, by0), v2(bx1, by1), rgb(66, 150, 250))
     let last = pt(pts[^1]) # held to the loop point
     dl.addLine(last, v2(le, last.y), col, 2)
     dl.popClipRect()
@@ -789,6 +830,9 @@ proc focus(clip, track: int) =
   ## Moving focus stops playback and deselects; leaving a clip forgets its mutes and solos.
   for n in cur().notes.mitems:
     n.sel = false
+  for c in cur().cc.mitems:
+    for p in c.mitems:
+      p.sel = false
   if clip != song.clip:
     pSel = -1
     for t in song.clips[song.clip].mitems:
