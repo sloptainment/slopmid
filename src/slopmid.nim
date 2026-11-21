@@ -7,8 +7,8 @@
 
 import std/[algorithm, locks, math, os, sequtils, strformat, strutils]
 import imgui
-import wrap/[alsa, gui, slopgs]
-import roll, gm
+import wrap/[alsa, filebrowser, gui, slopgs]
+import roll, gm, smm
 
 const
   KeyW = 56f32 # note-name column
@@ -1591,8 +1591,146 @@ proc history() =
     last = undoStack.pop
     restore last
 
+type After = enum ## what to do once unsaved changes are dealt with
+  Nothing
+  NewSong
+  OpenSong
+  ExitApp
+
+var
+  smmPath: string # "" = never saved
+  saved: Snap # the state at the last save, load or new
+  savedBpm: float
+  after: After
+  openPrompt, openErr: bool # popups are opened at the top level, not from inside a menu
+  fileErr: string
+
+proc dirty(): bool =
+  capture() != saved or song.bpm != savedBpm
+
+proc apply(s: Smm) =
+  ## `s` becomes the song, with a fresh undo history.
+  song.clips = s.clips
+  song.placements = s.placements
+  song.bpm = s.bpm
+  song.clip = 0
+  song.playing = false
+  song.pos = 0
+  song.idlePos = 0
+  clipNames = s.names
+  placeClip.setLen 0
+  pSel = -1
+  focus(0, -1)
+  undoStack.setLen 0
+  redoStack.setLen 0
+  last = capture()
+  saved = last
+  savedBpm = s.bpm
+
+proc fail(e: ref CatchableError) =
+  fileErr = e.msg
+  openErr = true
+
+proc load(path: string) =
+  try:
+    apply fromSmm(readFile(path))
+    smmPath = path
+  except CatchableError as e:
+    fail e
+
+proc write(path: string): bool =
+  try:
+    writeFile(path, toSmm((song.bpm, song.clips, clipNames, song.placements)))
+    smmPath = path
+    saved = capture()
+    savedBpm = song.bpm
+    result = true
+  except CatchableError as e:
+    fail e
+
+proc proceed() =
+  let a = after
+  after = Nothing
+  case a
+  of NewSong:
+    apply (120.0, newSeq[seq[Track]](1), @[""], newSeq[Placement]())
+    smmPath = ""
+  of OpenSong:
+    fbOpen(false)
+  of ExitApp:
+    gui.requestClose()
+  of Nothing:
+    discard
+
+proc ask(a: After) =
+  ## Do `a`, after asking about unsaved changes.
+  after = a
+  if dirty():
+    openPrompt = true
+  else:
+    proceed()
+
+proc fileDialogs() =
+  ## Top level, every frame: the popups and the file browsers.
+  if openPrompt:
+    igOpenPopup("Save changes?")
+    openPrompt = false
+  if openErr:
+    igOpenPopup("File error")
+    openErr = false
+  if igBeginPopupModal("Save changes?", nil, ImGuiWindowFlags.AlwaysAutoResize):
+    igText("The song has unsaved changes.")
+    if igButton("Save"):
+      igCloseCurrentPopup()
+      if smmPath == "":
+        fbOpen(true) # `after` happens once the name is picked
+      elif write(smmPath):
+        proceed()
+    igSameLine()
+    if igButton("Don't save"):
+      igCloseCurrentPopup()
+      proceed()
+    igSameLine()
+    if igButton("Cancel"):
+      igCloseCurrentPopup()
+      after = Nothing
+    igEndPopup()
+  if igBeginPopupModal("File error", nil, ImGuiWindowFlags.AlwaysAutoResize):
+    igText("%s", cstring(fileErr))
+    if igButton("OK"):
+      igCloseCurrentPopup()
+    igEndPopup()
+  let opened = fbPick(false)
+  if opened != nil:
+    load $opened
+  let named = fbPick(true)
+  if named != nil:
+    var path = $named
+    if not path.endsWith ".smm":
+      path &= ".smm"
+    if write(path):
+      proceed()
+
 proc ui() =
   if igBeginMainMenuBar():
+    if igBeginMenu("File"):
+      if igMenuItem("New"):
+        ask NewSong
+      if igMenuItem("Open..."):
+        ask OpenSong
+      if igMenuItem("Save"):
+        if smmPath == "":
+          after = Nothing
+          fbOpen(true)
+        else:
+          discard write(smmPath)
+      if igMenuItem("Save as..."):
+        after = Nothing
+        fbOpen(true)
+      igSeparator()
+      if igMenuItem("Exit"):
+        ask ExitApp
+      igEndMenu()
     if igBeginMenu("Edit"): # acts on the piano roll or song window, whichever you used last
       for (c, name, keys) in [
         (Undo, "Undo", "Ctrl+Z"),
@@ -1655,6 +1793,7 @@ proc ui() =
     if igBegin("Song", nil, ImGuiWindowFlags.NoScrollbar or ImGuiWindowFlags.NoScrollWithMouse):
       songPlaylist()
     igEnd()
+  fileDialogs()
   history()
   menuCmd = None
 
@@ -1669,6 +1808,8 @@ proc main() =
   pcm = alsa.open(Rate, LatencyUs)
   initLock(lock)
   last = capture()
+  saved = last
+  savedBpm = song.bpm
   createThread(audio, audioLoop)
   gui.open("slopmid", 1280, 800)
   while gui.running():

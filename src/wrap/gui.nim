@@ -50,6 +50,9 @@ proc open*(title: string, w, h: int) =
 proc running*(): bool =
   not window.windowShouldClose
 
+proc requestClose*() =
+  window.setWindowShouldClose(true)
+
 proc beginFrame*() =
   glfwPollEvents()
   igOpenGL3NewFrame()

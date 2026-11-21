@@ -1,3 +1,6 @@
 [submodule "deps/slopgs"]
 	path = deps/slopgs
 	url = https://github.com/sloptainment/slopgs.git
+[submodule "deps/imgui-filebrowser"]
+	path = deps/imgui-filebrowser
+	url = https://github.com/AirGuanZ/imgui-filebrowser
