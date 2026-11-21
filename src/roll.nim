@@ -3,29 +3,32 @@
 import std/[algorithm, math, sequtils]
 
 const
-  Ppq* = 96            ## ticks per beat
-  BarTicks* = 4 * Ppq  ## 4/4 only
+  Ppq* = 96 ## ticks per beat
+  BarTicks* = 4 * Ppq ## 4/4 only
 
 type
   Note* = object
-    start*, len*: int  ## ticks
+    start*, len*: int ## ticks
     pitch*, vel*: int
+
   Ev* = object
-    offset*: int       ## frames into the block
+    offset*: int ## frames into the block
     on*: bool
     pitch*, vel*: int
+
   Song* = object
     notes*: seq[Note]
     bpm*: float
     playing*: bool
-    pos*: float        ## playhead, ticks
+    pos*: float ## playhead, ticks
     sounding: array[128, bool]
 
 proc snap*(t, grid: int): int =
   ## `t` to the nearest multiple of `grid`.
   (t + grid div 2).floorDiv(grid) * grid
 
-proc snapDown*(t, grid: int): int = t.floorDiv(grid) * grid
+proc snapDown*(t, grid: int): int =
+  t.floorDiv(grid) * grid
 
 proc loopEnd*(s: Song): int =
   ## Playback loops at the end of the last bar holding a note.
@@ -40,43 +43,55 @@ proc advance*(s: var Song, frames, rate: int): seq[Ev] =
   ## The note on/offs due in the next `frames`; moves the playhead past them.
   var evs: seq[Ev]
   if s.playing:
-    let fpt = rate.float / (s.bpm / 60 * Ppq)  # frames per tick
+    let fpt = rate.float / (s.bpm / 60 * Ppq) # frames per tick
     let lend = s.loopEnd.float
     let a = if s.pos >= lend: 0.0 else: s.pos
     var b = a + frames.float / fpt
     # an edit took the note out from under a sounding key
-    for p in 0..127:
+    for p in 0 .. 127:
       if s.sounding[p] and not s.notes.anyIt(it.covers(p, a)):
         evs.add Ev(pitch: p)
     var segs = @[(a, min(b, lend), 0.0)]
     if b >= lend:
       let seam = (lend - a) * fpt
-      for n in s.notes: evs.add Ev(offset: seam.round.int, pitch: n.pitch)
+      for n in s.notes:
+        evs.add Ev(offset: seam.round.int, pitch: n.pitch)
       b -= lend
       segs.add (0.0, b, seam)
     for (lo, hi, base) in segs:
       for n in s.notes:
         let (st, en) = (n.start.float, float(n.start + n.len))
         if st >= lo and st < hi:
-          evs.add Ev(offset: round(base + (st - lo) * fpt).int, on: true, pitch: n.pitch, vel: n.vel)
+          evs.add Ev(
+            offset: round(base + (st - lo) * fpt).int,
+            on: true,
+            pitch: n.pitch,
+            vel: n.vel,
+          )
         if en >= lo and en < hi:
           evs.add Ev(offset: round(base + (en - lo) * fpt).int, pitch: n.pitch)
     s.pos = b
   else:
-    for p in 0..127: evs.add Ev(pitch: p)
+    for p in 0 .. 127:
+      evs.add Ev(pitch: p)
   # offs before ons at the same frame; offs only for what sounds
   for e in evs.sortedByIt((it.offset, it.on)):
     if e.on or s.sounding[e.pitch]:
       s.sounding[e.pitch] = e.on
-      result.add Ev(offset: min(e.offset, frames - 1), on: e.on, pitch: e.pitch, vel: e.vel)
+      result.add Ev(
+        offset: min(e.offset, frames - 1), on: e.on, pitch: e.pitch, vel: e.vel
+      )
 
 when isMainModule:
   # 120 BPM at 22050 Hz: 114.84 frames/tick, a 1024-frame block is ~8.9 ticks
-  var s = Song(bpm: 120, playing: true, notes: @[Note(start: 0, len: Ppq, pitch: 60, vel: 100)])
+  var s = Song(
+    bpm: 120, playing: true, notes: @[Note(start: 0, len: Ppq, pitch: 60, vel: 100)]
+  )
   doAssert s.loopEnd == BarTicks
   var log: seq[(int, Ev)]
-  for blk in 0 ..< 50:  # ~1.2 bars
-    for e in s.advance(1024, 22050): log.add (blk, e)
+  for blk in 0 ..< 50: # ~1.2 bars
+    for e in s.advance(1024, 22050):
+      log.add (blk, e)
   doAssert log.len == 3, $log
   doAssert log[0] == (0, Ev(offset: 0, on: true, pitch: 60, vel: 100))
   # off at tick 96 = frame 11025 = block 10, offset 785
@@ -98,7 +113,8 @@ when isMainModule:
   s.pos = 0
   doAssert s.advance(1024, 22050).len == 1
   s.pos = BarTicks - 4
-  doAssert s.advance(1024, 22050) == @[Ev(offset: 459, pitch: 64), Ev(offset: 459, on: true, pitch: 64, vel: 90)]
+  doAssert s.advance(1024, 22050) ==
+    @[Ev(offset: 459, pitch: 64), Ev(offset: 459, on: true, pitch: 64, vel: 90)]
   doAssert snap(47, 24) == 48 and snap(-13, 24) == -24 and snapDown(47, 24) == 24
   doAssert Song(notes: @[Note(start: 380, len: 8)]).loopEnd == 2 * BarTicks
   echo "roll: ok"

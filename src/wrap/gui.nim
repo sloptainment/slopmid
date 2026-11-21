@@ -10,13 +10,21 @@ import nimgl/[glfw, opengl]
 # include dirs and IMGUI_IMPL_API="extern \"C\"".
 const deps = currentSourcePath.parentDir / ".." / ".." / "deps"
 {.passC: "-I" & deps / "nimgl/src/nimgl/private/glfw/include".}
-{.compile(deps / "imgui/src/imgui/private/cimgui/imgui/backends/imgui_impl_glfw.cpp",
-          "-include " & currentSourcePath.parentDir / "glfw_compat.h").}
-proc ImGui_ImplGlfw_InitForOpenGL(window: GLFWWindow, installCallbacks: bool): bool {.importc, cdecl.}
+{.
+  compile(
+    deps / "imgui/src/imgui/private/cimgui/imgui/backends/imgui_impl_glfw.cpp",
+    "-include " & currentSourcePath.parentDir / "glfw_compat.h",
+  )
+.}
+proc ImGui_ImplGlfw_InitForOpenGL(
+  window: GLFWWindow, installCallbacks: bool
+): bool {.importc, cdecl.}
+
 proc ImGui_ImplGlfw_NewFrame() {.importc, cdecl.}
 
 type Flags = ImGuiWindowFlags | ImGuiButtonFlags
-proc `or`*[T: Flags](a, b: T): T = cast[T](a.int32 or b.int32)
+proc `or`*[T: Flags](a, b: T): T =
+  cast[T](a.int32 or b.int32)
 
 var window: GLFWWindow
 
@@ -38,7 +46,8 @@ proc open*(title: string, w, h: int) =
   doAssert ImGui_ImplGlfw_InitForOpenGL(window, true)
   doAssert igOpenGL3Init("#version 330")
 
-proc running*(): bool = not window.windowShouldClose
+proc running*(): bool =
+  not window.windowShouldClose
 
 proc beginFrame*() =
   glfwPollEvents()

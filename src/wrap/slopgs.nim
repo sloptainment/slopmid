@@ -14,8 +14,8 @@ const engine = currentSourcePath.parentDir / ".." / ".." / "deps/slopgs/src/engi
 {.compile(engine / "voice.c", "-x c -std=c11").}
 
 const
-  Rate* = 22050        ## voice.h RENDER_RATE (RESAMPLE_FACTOR 1)
-  BlockFrames* = 1024  ## voice.h SERVICE_BLOCK_FRAMES, the driver's Mix call
+  Rate* = 22050 ## voice.h RENDER_RATE (RESAMPLE_FACTOR 1)
+  BlockFrames* = 1024 ## voice.h SERVICE_BLOCK_FRAMES, the driver's Mix call
 
 type Block* = array[BlockFrames * 2, int16]
 
@@ -31,7 +31,9 @@ var allocated: uint32
 proc rt_alloc(n: uint32): pointer {.exportc, cdecl.} =
   allocated += n
   allocShared0(max(n, 8))
-proc rt_mem_size(): uint32 {.exportc, cdecl.} = allocated
+
+proc rt_mem_size(): uint32 {.exportc, cdecl.} =
+  allocated
 
 # gm.dls is parsed in place, so it lives as long as the engine does.
 var dls: string
