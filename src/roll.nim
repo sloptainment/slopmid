@@ -24,6 +24,7 @@ type
   Placement* = object ## a clip placed in the song window
     clip*, lane*: int
     start*, len*, offset*: int ## ticks; `offset`: where in the clip it starts; past its loop end it repeats
+    sel*: bool ## selected in the song window
 
   Src = object ## a placement playing in this block
     p: Placement
