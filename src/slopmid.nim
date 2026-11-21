@@ -650,6 +650,7 @@ proc pianoRoll() =
     let x0 = tickX(n.start.float)
     let vy = bottom - float32(n.vel) / 127 * velH
     let c = if n.sel: rgb(255, 255, 85) else: rgb(110, 210, 110)
+    dl.addLine(v2(x0, vy), v2(tickX(float(n.start + n.len)), vy), (if n.sel: rgb(255, 255, 85, 90) else: rgb(110, 210, 110, 90)), 2)
     dl.addLine(v2(x0, bottom), v2(x0, vy), c, 2)
     dl.addCircleFilled(v2(x0, vy), 4, c)
 
