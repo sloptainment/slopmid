@@ -12,6 +12,7 @@ const
   KeyW = 56f32 # note-name column
   RulerH = 18f32
   SbW = 12f32 # scrollbar thickness
+  HdrW = 108f32 # lane numbers and mute/solo in the song window
   EdgeW = 6f32 # grab zone at a note's right end for resizing
   Snaps = [
     ("Bar", BarTicks),
@@ -79,6 +80,12 @@ type Tool = enum
   Draw
   Select
 
+type PDrag = enum ## dragging a placement in the song window
+  PIdle
+  PMove
+  PTrimL
+  PTrimR
+
 type ScrollGrab = enum
   GrabBody
   GrabLo
@@ -103,6 +110,13 @@ var
   focusTrack = -1 # in clip song.clip; -1 = none
   noTrack: Track # stands in for the focused track while there is none
   clipNames = @[""] # parallel to song.clips; "" shows as "Clip N"
+  songBeatW = 16f32 # the song window's zoom and scroll, like the roll's
+  laneH = 28f32
+  songScrollX = 0f32
+  songScrollY = 0f32
+  pdrag = PIdle
+  pIdx, pGrab: int
+  pSel = -1 # the clicked placement, drawn with a white border
 
 proc cur(): var Track =
   if focusTrack >= 0:
@@ -123,9 +137,9 @@ proc transport() =
   let io = igGetIO()
   if igButton(if song.playing: "Pause" else: "Play", v2(60, 0)) or
       (igIsKeyPressed(ImGuiKey.Space, false) and not io.wantTextInput):
-    song.playing = focusTrack >= 0 and not song.playing
+    song.playing = (song.songMode or focusTrack >= 0) and not song.playing
   igSameLine()
-  if igButton("Stop", v2(60, 0)) and focusTrack >= 0:
+  if igButton("Stop", v2(60, 0)) and (song.songMode or focusTrack >= 0):
     song.playing = false
     song.pos = 0
   igSameLine()
@@ -152,6 +166,13 @@ proc transport() =
   igText(
     "%s", cstring(&"{t div BarTicks + 1}:{t mod BarTicks div Ppq + 1}:{t mod Ppq:02}")
   )
+  igSameLine()
+  for (name, mode) in [("Song", true), ("Clip", false)]:
+    if igRadioButton(cstring(name), song.songMode == mode) and song.songMode != mode:
+      song.songMode = mode
+      song.playing = false # `pos` means something else now
+      song.pos = 0
+    igSameLine()
 
 proc scrollbar(
     id: cstring,
@@ -337,7 +358,7 @@ proc pianoRoll() =
   # click or drag on the ruler moves the playhead
   igSetCursorScreenPos(v2(gridX, origin.y))
   discard igInvisibleButton("ruler", v2(gridW, RulerH))
-  if igIsItemActive():
+  if igIsItemActive() and not song.songMode:
     song.pos = xTick(mouse.x).float
 
   igSetCursorScreenPos(v2(origin.x, sheetTop))
@@ -594,13 +615,20 @@ proc pianoRoll() =
     dl.addLine(v2(x0, bottom), v2(x0, vy), rgb(110, 210, 110), 2)
     dl.addCircleFilled(v2(x0, vy), 4, rgb(110, 210, 110))
 
-  let px = tickX(song.pos)
-  dl.addLine(v2(px, origin.y), v2(px, bottom), rgb(255, 255, 255, 180))
+  if song.songMode: # a line for each placement of this clip that is playing
+    for p in song.placements:
+      let c = p.clipTime(song.clips[p.clip].loopEnd, song.pos)
+      if p.clip == song.clip and c >= 0:
+        dl.addLine(v2(tickX(c), origin.y), v2(tickX(c), bottom), rgb(255, 255, 255, 180))
+  else:
+    let px = tickX(song.pos)
+    dl.addLine(v2(px, origin.y), v2(px, bottom), rgb(255, 255, 255, 180))
   dl.popClipRect()
 
 var
   togglePianoRoll = true
   toggleClips = true
+  toggleSong = true
   firstFrame = true
 
 proc focus(clip, track: int) =
@@ -608,13 +636,15 @@ proc focus(clip, track: int) =
   for n in cur().notes.mitems:
     n.sel = false
   if clip != song.clip:
+    pSel = -1
     for t in song.clips[song.clip].mitems:
       t.mute = false
       t.solo = false
   song.clip = clip
   focusTrack = track
-  song.playing = false
-  song.pos = 0
+  if not song.songMode: # the song plays on through clip changes
+    song.playing = false
+    song.pos = 0
 
 proc clipLabel(i: int): string =
   if clipNames[i] == "": &"Clip {i + 1}" else: clipNames[i]
@@ -639,6 +669,11 @@ proc clips() =
     focus(gone, -1)
     song.clips.delete gone
     clipNames.delete gone
+    song.placements.keepItIf(it.clip != gone)
+    pSel = -1
+    for p in song.placements.mitems:
+      if p.clip > gone:
+        dec p.clip
     song.clip = min(gone, song.clips.high)
   igSameLine()
   igText("Clip name: ")
@@ -735,12 +770,215 @@ proc clips() =
   if igButton("ADD"):
     song.clips[song.clip].add Track()
 
+proc fits(i: int, p: Placement): bool =
+  ## `p` could replace placement `i` (-1: be added): in bounds and clear of its lane's others.
+  result = p.len > 0 and p.start >= 0 and p.lane in 0 ..< Lanes
+  for j, q in song.placements:
+    if j != i and q.lane == p.lane and q.start < p.start + p.len and p.start < q.start + q.len:
+      result = false
+
+proc songPlaylist() =
+  ## Lanes of placed clips. Click empty space to place the clip chosen in Clips, drag to move,
+  ## drag an edge to trim (the left one starts the clip part-way in, the right one past its end
+  ## repeats it), right-click removes. Panning and zooming as in the piano roll.
+  let io = igGetIO()
+  let dl = igGetWindowDrawList()
+  let origin = igGetCursorScreenPosNonUDT()
+  let avail = igGetContentRegionAvailNonUDT()
+  let
+    gridX = origin.x + HdrW
+    gridW = avail.x - HdrW - SbW
+    right = gridX + gridW
+    paneH = avail.y - RulerH - SbW
+    laneTop = origin.y + RulerH
+    bottom = laneTop + paneH
+    grid = Snaps[snapIdx][1]
+    mouse = v2(io.mousePos.x, io.mousePos.y)
+
+  songScrollY = clamp(songScrollY, 0, max(0, Lanes.float32 * laneH - paneH))
+  songScrollX = max(songScrollX, 0)
+  proc tickX(t: float): float32 =
+    gridX + float32(t / Ppq.float) * songBeatW - songScrollX
+
+  proc xTick(x: float32): int =
+    int(max(0, (x - gridX + songScrollX) / songBeatW * Ppq.float32))
+
+  proc laneY(l: int): float32 =
+    laneTop + l.float32 * laneH - songScrollY
+
+  proc yLane(y: float32): int =
+    int(clamp((y - laneTop + songScrollY) / laneH, 0, Lanes - 1))
+
+  # --- input ---
+  igSetCursorScreenPos(v2(gridX, origin.y))
+  discard igInvisibleButton("ruler", v2(gridW, RulerH))
+  if igIsItemActive() and song.songMode:
+    song.pos = xTick(mouse.x).float
+  igSetCursorScreenPos(v2(gridX, laneTop))
+  discard igInvisibleButton(
+    "grid",
+    v2(gridW, paneH),
+    ImGuiButtonFlags.MouseButtonLeft or ImGuiButtonFlags.MouseButtonRight or
+      ImGuiButtonFlags.MouseButtonMiddle,
+  )
+  let hovered = igIsItemHovered()
+  let pan = igIsItemActive() and igIsMouseDown(ImGuiMouseButton.Middle)
+  if hovered:
+    if io.keyShift:
+      songScrollX -= io.mouseWheel * songBeatW
+    else:
+      songScrollY -= io.mouseWheel * laneH * 3
+    songScrollX -= io.mouseWheelH * songBeatW
+  let beats = float32(song.songEnd + 16 * BarTicks) / Ppq.float32 # room to add past the end
+  if pan:
+    if io.keyCtrl: # zoom about the mouse: right/up zooms in
+      let u = (mouse.x - gridX + songScrollX) / songBeatW
+      let v = (mouse.y - laneTop + songScrollY) / laneH
+      songBeatW = clamp(songBeatW * exp(io.mouseDelta.x * 0.01), gridW / beats, 256)
+      laneH = clamp(laneH * exp(-io.mouseDelta.y * 0.01), paneH / Lanes.float32, 80)
+      songScrollX = u * songBeatW - (mouse.x - gridX)
+      songScrollY = v * laneH - (mouse.y - laneTop)
+    else:
+      songScrollX -= io.mouseDelta.x
+      songScrollY -= io.mouseDelta.y
+  songScrollY = clamp(songScrollY, 0, max(0, Lanes.float32 * laneH - paneH))
+  songScrollX = max(songScrollX, 0)
+  scrollbar("scrollX", false, v2(gridX, bottom), gridW, songScrollX, songBeatW, beats, 256)
+  scrollbar("scrollY", true, v2(right, laneTop), paneH, songScrollY, laneH, Lanes.float32, 80)
+
+  let t = xTick(mouse.x)
+  let lane = yLane(mouse.y)
+  var hit = -1
+  for i in countdown(song.placements.high, 0):
+    let p = song.placements[i]
+    if p.lane == lane and t >= p.start and t < p.start + p.len:
+      hit = i
+      break
+  let onR = hit >= 0 and
+    tickX(float(song.placements[hit].start + song.placements[hit].len)) - mouse.x < EdgeW
+  let onL = hit >= 0 and not onR and
+    mouse.x - tickX(song.placements[hit].start.float) < EdgeW
+  if hovered and (onL or onR or pdrag in {PTrimL, PTrimR}):
+    igSetMouseCursor(ImGuiMouseCursor.ResizeEW)
+
+  if hovered and igIsMouseClicked(ImGuiMouseButton.Left):
+    if hit < 0:
+      var p = Placement(
+        clip: song.clip, lane: lane, start: snapDown(t, grid),
+        len: song.clips[song.clip].loopEnd,
+      )
+      for q in song.placements: # no longer than the gap before the next one
+        if q.lane == lane and q.start >= p.start:
+          p.len = min(p.len, q.start - p.start)
+      if fits(-1, p):
+        song.placements.add p
+    else:
+      if song.placements[hit].clip != song.clip:
+        focus(song.placements[hit].clip, -1)
+      pIdx = hit
+      pSel = hit
+      pGrab = t - song.placements[hit].start
+      pdrag = if onR: PTrimR elif onL: PTrimL else: PMove
+  if not igIsMouseDown(ImGuiMouseButton.Left):
+    pdrag = PIdle
+  if pdrag != PIdle:
+    var p = song.placements[pIdx]
+    case pdrag
+    of PMove:
+      p.start = max(0, snap(t - pGrab, grid))
+      p.lane = lane
+    of PTrimR:
+      p.len = max(grid, snap(t, grid) - p.start)
+    of PTrimL: # the clip stays put under the cursor: its start moves with the edge
+      let d = max(-p.start, min(snap(t, grid) - p.start, p.len - grid))
+      p.start += d
+      p.len -= d
+      p.offset = floorMod(p.offset + d, song.clips[p.clip].loopEnd)
+    of PIdle:
+      discard
+    if fits(pIdx, p):
+      song.placements[pIdx] = p
+  elif hovered and igIsMouseClicked(ImGuiMouseButton.Right) and hit >= 0:
+    song.placements.delete hit
+    if pSel == hit:
+      pSel = -1
+    elif pSel > hit:
+      dec pSel
+
+  # --- drawing ---
+  dl.pushClipRect(v2(origin.x, laneTop), v2(gridX, bottom), true)
+  for l in 0 ..< Lanes:
+    dl.addRectFilled(v2(origin.x, laneY(l)), v2(gridX - 1, laneY(l) + laneH - 1), rgb(44, 46, 52))
+  dl.popClipRect()
+  dl.pushClipRect(v2(gridX, origin.y), v2(right, bottom), true)
+  for l in 0 ..< Lanes:
+    dl.addRectFilled(
+      v2(gridX, laneY(l)),
+      v2(right, laneY(l) + laneH),
+      if l mod 2 == 0: rgb(52, 56, 62) else: rgb(46, 50, 56),
+    )
+  dl.addRectFilled(v2(gridX, origin.y), v2(right, laneTop), rgb(30, 30, 30)) # over the rows scrolled up
+  var gt = xTick(gridX).snapDown(Ppq)
+  while gt <= xTick(right):
+    let x = tickX(gt.float)
+    dl.addLine(
+      v2(x, laneTop), v2(x, bottom), if gt mod BarTicks == 0: rgb(20, 20, 20) else: rgb(38, 40, 44)
+    )
+    if gt mod BarTicks == 0:
+      dl.addText(v2(x + 3, origin.y + 1), rgb(200, 200, 200), cstring($(gt div BarTicks + 1)))
+    gt += Ppq
+  dl.popClipRect()
+
+  dl.pushClipRect(v2(gridX, laneTop), v2(right, bottom), true)
+  for i, p in song.placements:
+    let (x0, x1, y) = (tickX(p.start.float), tickX(float(p.start + p.len)), laneY(p.lane))
+    dl.addRectFilled(
+      v2(x0, y + 1), v2(x1, y + laneH - 2),
+      rgb(70 + p.clip * 67 mod 100, 100 + p.clip * 131 mod 90, 150 + p.clip * 43 mod 80), 2,
+    )
+    dl.addRect(
+      v2(x0, y + 1), v2(x1, y + laneH - 2),
+      if i == pSel: rgb(255, 255, 255) else: rgb(10, 10, 10), 2,
+    )
+    dl.pushClipRect(v2(x0, y), v2(x1, y + laneH), true)
+    dl.addText(v2(x0 + 4, y + 2), rgb(255, 255, 255), cstring(clipLabel(p.clip)))
+    dl.popClipRect()
+    let loop = song.clips[p.clip].loopEnd
+    var m = p.start + loop - p.offset # where the clip starts over
+    while m < p.start + p.len:
+      dl.addLine(v2(tickX(m.float), y + 1), v2(tickX(m.float), y + laneH - 2), rgb(255, 255, 255), 2)
+      m += loop
+  dl.popClipRect()
+  if song.songMode:
+    dl.pushClipRect(v2(gridX, origin.y), v2(right, bottom), true)
+    dl.addLine(v2(tickX(song.pos), origin.y), v2(tickX(song.pos), bottom), rgb(255, 255, 255, 180))
+    dl.popClipRect()
+
+  # lane numbers and mute/solo, after the backgrounds
+  if laneH >= 22: # smaller rows would overlap
+    igPushClipRect(v2(origin.x, laneTop), v2(gridX, bottom), true)
+    for l in 0 ..< Lanes:
+      let y = laneY(l)
+      if y + laneH < laneTop or y > bottom:
+        continue
+      igSetCursorScreenPos(v2(origin.x + 4, y + (laneH - igGetFrameHeight()) / 2))
+      igPushID(int32(l))
+      igText("%s", cstring($(l + 1)))
+      igSameLine()
+      discard igCheckbox("M", addr song.laneMute[l])
+      igSameLine()
+      discard igCheckbox("S", addr song.laneSolo[l])
+      igPopID()
+    igPopClipRect()
+
 proc ui() =
   if igBeginMainMenuBar():
     if igBeginMenu("Window"):
       if igCheckbox("Piano roll", addr togglePianoRoll):
         discard
       if igCheckbox("Clips", addr toggleClips):
+        discard
+      if igCheckbox("Song", addr toggleSong):
         discard
       igEndMenu()
     igEndMainMenuBar()
@@ -757,10 +995,12 @@ proc ui() =
   # after the bars, so the dockspace fills what they leave
   let space = igDockSpaceOverViewport()
   if firstFrame: # default layout
-    var left, right: ImGuiID
+    var left, right, lowerLeft: ImGuiID
     discard igDockBuilderSplitNode(space, ImGuiDir.Left, 0.5, addr left, addr right)
     igDockBuilderDockWindow("Clips", left)
     igDockBuilderDockWindow("Piano roll", right)
+    discard igDockBuilderSplitNode(left, ImGuiDir.Down, 0.5, addr lowerLeft, nil)
+    igDockBuilderDockWindow("Song", lowerLeft)
     firstFrame = false
   if togglePianoRoll:
     if igBegin("Piano roll"):
@@ -771,6 +1011,11 @@ proc ui() =
   if toggleClips:
     if igBegin("Clips"):
       clips()
+    igEnd()
+  if toggleSong:
+    # the lane widgets overhang the pane at the edges; scrolling is ours
+    if igBegin("Song", nil, ImGuiWindowFlags.NoScrollbar or ImGuiWindowFlags.NoScrollWithMouse):
+      songPlaylist()
     igEnd()
 
 proc main() =
