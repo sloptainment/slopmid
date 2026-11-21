@@ -73,6 +73,7 @@ var
   previewKey = -1
   focusTrack = -1 # in clip song.clip; -1 = none
   noTrack: Track # stands in for the focused track while there is none
+  clipNames = @[""] # parallel to song.clips; "" shows as "Clip N"
 
 proc cur(): var Track =
   if focusTrack >= 0:
@@ -469,25 +470,38 @@ proc focus(clip, track: int) =
   song.playing = false
   song.pos = 0
 
+proc clipLabel(i: int): string =
+  if clipNames[i] == "": &"Clip {i + 1}" else: clipNames[i]
+
 proc clips() =
   igText("Clip:")
   igSameLine()
   igSetNextItemWidth(100)
-  if igBeginCombo("##clip", cstring(&"Clip {song.clip + 1}")):
+  if igBeginCombo("##clip", cstring(clipLabel(song.clip))):
     for i in song.clips.low .. song.clips.high:
-      if igSelectable(cstring(&"Clip {i + 1}"), i == song.clip):
+      if igSelectable(cstring(&"{clipLabel(i)}##{i}"), i == song.clip):
         focus(i, -1)
     igEndCombo()
   igSameLine()
   if igButton("Add"):
     song.clips.add newSeq[Track]()
+    clipNames.add ""
     focus(song.clips.high, -1)
   igSameLine()
   if igButton("Remove") and song.clips.len > 1:
     let gone = song.clip
     focus(gone, -1)
     song.clips.delete gone
+    clipNames.delete gone
     song.clip = min(gone, song.clips.high)
+  igSameLine()
+  igText("Clip name: ")
+  igSameLine()
+  igSetNextItemWidth(-1)
+  var buf: array[64, char]
+  copyMem(addr buf[0], cstring(clipNames[song.clip]), min(clipNames[song.clip].len, 63))
+  if igInputText("##name", cast[cstring](addr buf[0]), buf.len.uint):
+    clipNames[song.clip] = $cast[cstring](addr buf[0])
   igSeparator()
   if igBeginTable("tracks", 4, ImGuiTableFlags.SizingStretchProp):
     igTableSetupColumn("", ImGuiTableColumnFlags.WidthFixed) # "X"
