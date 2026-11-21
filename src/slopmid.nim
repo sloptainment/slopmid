@@ -778,7 +778,7 @@ proc fits(i: int, p: Placement): bool =
       result = false
 
 proc songPlaylist() =
-  ## Lanes of placed clips. Click empty space to place the clip chosen in Clips, drag to move,
+  ## Lanes of placed clips. Click empty space to place the clip chosen in Clips (drag before releasing to position it), drag to move,
   ## drag an edge to trim (the left one starts the clip part-way in, the right one past its end
   ## repeats it), right-click removes. Panning and zooming as in the piano roll.
   let io = igGetIO()
@@ -872,6 +872,10 @@ proc songPlaylist() =
           p.len = min(p.len, q.start - p.start)
       if fits(-1, p):
         song.placements.add p
+        pIdx = song.placements.high # keep dragging it, as a new note in the roll
+        pSel = pIdx
+        pGrab = t - p.start
+        pdrag = PMove
     else:
       if song.placements[hit].clip != song.clip:
         focus(song.placements[hit].clip, -1)
