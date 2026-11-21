@@ -126,11 +126,14 @@ proc pianoRollWindow*() =
     focused().notes.duplicate(grid)
   if igIsWindowHovered() and igIsMouseClicked(ImGuiMouseButton.Left) and mouse.y >= sheetTop and mouse.y < bottom:
     st.laneFocus = mouse.y >= velTop
-  if notesOk and not curveFocus and fired(RollEd, Copy, ImGuiKey.C):
+  let cut = fired(RollEd, Cut, ImGuiKey.X)
+  if notesOk and not curveFocus and (cut or fired(RollEd, Copy, ImGuiKey.C)):
     let sel = focused().notes.filterIt(it.sel)
     if sel.len > 0:
       st.noteClip = sel
       st.ccCopied = false
+      if cut:
+        focused().notes.keepItIf(not it.sel)
   if notesOk and not curveFocus and not st.ccCopied and fired(RollEd, Paste, ImGuiKey.V) and focusTrack >= 0 and st.noteClip.len > 0:
     focused().notes.pasteNotes(st.noteClip, snap(song.clipPos.int, grid)) # the group's first note lands on the playhead
   if notesOk and fired(RollEd, Quantize, ImGuiKey.Q):
@@ -374,9 +377,11 @@ proc pianoRollWindow*() =
       pts.toggleAll
     if fired(RollEd, Delete, ImGuiKey.Delete, ctrl = false):
       pts.keepItIf(not it.sel)
-    if curveFocus and fired(RollEd, Copy, ImGuiKey.C) and pts.anyIt(it.sel):
+    if curveFocus and (cut or fired(RollEd, Copy, ImGuiKey.C)) and pts.anyIt(it.sel):
       st.ccClip = pts.filterIt(it.sel)
       st.ccCopied = true
+      if cut:
+        pts.keepItIf(not it.sel)
     if curveFocus and st.ccCopied and fired(RollEd, Paste, ImGuiKey.V) and st.ccClip.len > 0:
       pts.pasteCurve(st.ccClip, snap(song.clipPos.int, grid), loopT) # the first point lands on the playhead
   if st.laneMode != Vel:

@@ -75,6 +75,7 @@ proc ui() =
         (SelectAll, "Select all / none", "Ctrl+A"),
         (Duplicate, "Duplicate", "Ctrl+D"),
         (Copy, "Copy", "Ctrl+C"),
+        (Cut, "Cut", "Ctrl+X"),
         (Paste, "Paste", "Ctrl+V"),
         (Quantize, "Quantize", "Ctrl+Q"),
         (Delete, "Delete", "Delete"),

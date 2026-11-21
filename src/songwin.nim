@@ -71,10 +71,14 @@ proc songWindow*() =
   toolButtons(st.tool, origin)
   if fired(SongEd, SelectAll, ImGuiKey.A):
     song.placements.toggleAll
-  if fired(SongEd, Copy, ImGuiKey.C):
+  let cut = fired(SongEd, Cut, ImGuiKey.X)
+  if cut or fired(SongEd, Copy, ImGuiKey.C):
     let sel = song.placements.filterIt(it.sel)
     if sel.len > 0:
       placeClip = sel
+      if cut:
+        song.placements.keepItIf(not it.sel)
+        clicked = -1
   if fired(SongEd, Paste, ImGuiKey.V) and placeClip.len > 0:
     song.pastePlacements(placeClip, snap(song.songPos.int, grid)) # the group's first clip lands on the playhead
   if fired(SongEd, Quantize, ImGuiKey.Q):

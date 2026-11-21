@@ -34,7 +34,7 @@ type
     Bend ## the piano roll only
 
   Cmd* = enum
-    None, Undo, Redo, SelectAll, Duplicate, Copy, Paste, Quantize, Delete, SemiUp, SemiDown, OctUp, OctDown
+    None, Undo, Redo, SelectAll, Duplicate, Copy, Cut, Paste, Quantize, Delete, SemiUp, SemiDown, OctUp, OctDown
 
   Editor* = enum ## the piano roll or song window, whichever had focus last: where the Edit menu acts
     NoEditor
