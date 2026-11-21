@@ -145,10 +145,16 @@ proc main() =
       getAppDir() / "deps/slopgs/dist/gm.dls"
   audio.start(dlsPath)
   gui.open("slopmid", 1280, 800)
+  var lastTitle = "slopmid"
   while gui.running():
     gui.beginFrame()
+    var title: string
     withLock lock:
       ui()
+      title = windowTitle()
+    if title != lastTitle:
+      gui.setTitle title
+      lastTitle = title
     gui.endFrame()
 
 main()

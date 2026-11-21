@@ -1,5 +1,5 @@
 ## Files: New, Open, Save, Save as, Export and Export WAV, and the prompts about unsaved changes.
-import std/strutils
+import std/[os, strutils]
 import imgui
 import wrap/[filebrowser, gui]
 import model, smf, audio, smm, common, history
@@ -30,6 +30,10 @@ proc markSaved() =
 
 proc dirty(): bool =
   capture() != saved or song.bpm != savedBpm
+
+proc windowTitle*(): string =
+  "slopmid - " & (if smmPath == "": "untitled" else: smmPath.extractFilename) &
+    (if dirty(): "*" else: "")
 
 proc apply(s: Song) =
   ## `s` becomes the song, with a fresh undo history.

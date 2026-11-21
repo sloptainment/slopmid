@@ -50,6 +50,9 @@ proc open*(title: string, w, h: int) =
 proc running*(): bool =
   not window.windowShouldClose
 
+proc setTitle*(title: string) =
+  window.setWindowTitle(cstring(title))
+
 proc requestClose*() =
   window.setWindowShouldClose(true)
 
