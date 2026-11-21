@@ -269,10 +269,10 @@ proc scrollbar(
       zoom = len / ((hi - lo) / k)
       scroll = lo / k * zoom
     of GrabHi:
-      hi = clamp(mouse, lo + SbW, len)
+      hi = max(mouse, lo + SbW) # past the track end zooms out beyond fit
       zoom = len / ((hi - lo) / k)
       scroll = lo / k * zoom
-    zoom = clamp(zoom, k, maxZoom)
+    zoom = clamp(zoom, k / 4, maxZoom)
     scroll = clamp(scroll, 0, max(0, content * zoom - len))
     lo = scroll / zoom * k
     hi = (scroll + len) / zoom * k
@@ -283,9 +283,9 @@ proc scrollbar(
       v2(at.x + lo, at.y)
   let b =
     if vertical:
-      v2(at.x + SbW, at.y + hi)
+      v2(at.x + SbW, at.y + min(hi, len))
     else:
-      v2(at.x + hi, at.y + SbW)
+      v2(at.x + min(hi, len), at.y + SbW)
   let dl = igGetWindowDrawList()
   dl.addRectFilled(at, v2(at.x + size.x, at.y + size.y), rgb(24, 24, 26))
   dl.addRectFilled(
@@ -531,8 +531,8 @@ proc pianoRoll() =
     if io.keyCtrl: # zoom about the mouse: right/up zooms in
       let u = (mouse.x - gridX + scrollX) / beatW
       let v = (mouse.y - sheetTop + scrollY) / keyH
-      beatW = clamp(beatW * exp(io.mouseDelta.x * 0.01), gridW / beats, 256)
-      keyH = clamp(keyH * exp(-io.mouseDelta.y * 0.01), paneH / 128, 40)
+      beatW = clamp(beatW * exp(io.mouseDelta.x * 0.01), gridW / beats / 4, 1024)
+      keyH = clamp(keyH * exp(-io.mouseDelta.y * 0.01), paneH / 128 / 4, 160)
       scrollX = u * beatW - (mouse.x - gridX)
       scrollY = v * keyH - (mouse.y - sheetTop)
     else:
@@ -541,8 +541,8 @@ proc pianoRoll() =
   # clamp after the input above, or the frame draws past the edge
   scrollY = clamp(scrollY, 0, max(0, 128 * keyH - paneH))
   scrollX = max(scrollX, 0)
-  scrollbar("scrollX", false, v2(gridX, bottom), gridW, scrollX, beatW, beats, 256)
-  scrollbar("scrollY", true, v2(right, sheetTop), paneH, scrollY, keyH, 128, 40)
+  scrollbar("scrollX", false, v2(gridX, bottom), gridW, scrollX, beatW, beats, 1024)
+  scrollbar("scrollY", true, v2(right, sheetTop), paneH, scrollY, keyH, 128, 160)
 
   let t = xTick(mouse.x)
   let p = yPitch(mouse.y)
@@ -1272,8 +1272,8 @@ proc songPlaylist() =
     if io.keyCtrl: # zoom about the mouse: right/up zooms in
       let u = (mouse.x - gridX + songScrollX) / songBeatW
       let v = (mouse.y - laneTop + songScrollY) / laneH
-      songBeatW = clamp(songBeatW * exp(io.mouseDelta.x * 0.01), gridW / beats, 256)
-      laneH = clamp(laneH * exp(-io.mouseDelta.y * 0.01), paneH / Lanes.float32, 80)
+      songBeatW = clamp(songBeatW * exp(io.mouseDelta.x * 0.01), gridW / beats / 4, 1024)
+      laneH = clamp(laneH * exp(-io.mouseDelta.y * 0.01), paneH / Lanes.float32 / 4, 320)
       songScrollX = u * songBeatW - (mouse.x - gridX)
       songScrollY = v * laneH - (mouse.y - laneTop)
     else:
@@ -1281,8 +1281,8 @@ proc songPlaylist() =
       songScrollY -= io.mouseDelta.y
   songScrollY = clamp(songScrollY, 0, max(0, Lanes.float32 * laneH - paneH))
   songScrollX = max(songScrollX, 0)
-  scrollbar("scrollX", false, v2(gridX, bottom), gridW, songScrollX, songBeatW, beats, 256)
-  scrollbar("scrollY", true, v2(right, laneTop), paneH, songScrollY, laneH, Lanes.float32, 80)
+  scrollbar("scrollX", false, v2(gridX, bottom), gridW, songScrollX, songBeatW, beats, 1024)
+  scrollbar("scrollY", true, v2(right, laneTop), paneH, songScrollY, laneH, Lanes.float32, 320)
 
   toolButtons(songTool, origin)
   if fired("Song", SelectAll, ImGuiKey.A):
