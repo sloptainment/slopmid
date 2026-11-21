@@ -1065,6 +1065,15 @@ proc clips() =
         dec p.clip
     song.clip = min(gone, song.clips.high)
   igSameLine()
+  if igButton("Duplicate"):
+    focus(song.clip, -1) # deselects, so the copy has no selection
+    song.clips.add song.clips[song.clip]
+    clipNames.add clipNames[song.clip]
+    for t in song.clips[^1].mitems:
+      t.mute = false
+      t.solo = false
+    focus(song.clips.high, -1)
+  igSameLine()
   igText("Clip name: ")
   igSameLine()
   igSetNextItemWidth(-1)
