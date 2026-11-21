@@ -348,6 +348,7 @@ proc pianoRoll() =
     right = gridX + gridW
     bothH = avail.y - RulerH - SbW # sheet on top, velocity below
     velH = bothH * velFrac
+    valH = velH - 8 # value 127 sits 8px below the border, clear of the split grip
     paneH = bothH - velH # sheet height
     sheetTop = origin.y + RulerH
     velTop = sheetTop + paneH
@@ -374,7 +375,7 @@ proc pianoRoll() =
   # drag the border between sheet and velocity lane; first submitted item wins
   # hover where items overlap, so this goes before the lanes' buttons
   igSetCursorScreenPos(v2(origin.x, velTop - 8))
-  discard igInvisibleButton("split", v2(avail.x - SbW, 16))
+  discard igInvisibleButton("split", v2(avail.x - SbW, 8)) # above the border only
   let splitHot = igIsItemHovered() or igIsItemActive()
   if splitHot:
     igSetMouseCursor(ImGuiMouseCursor.ResizeNS)
@@ -604,14 +605,14 @@ proc pianoRoll() =
   # dragging in the velocity lane sets the selected notes (all, if none) whose bar is under the mouse
   let onLine = proc(n: Note): bool = # the faint line across the note's length
     mouse.x >= tickX(n.start.float) and mouse.x <= tickX(float(n.start + n.len)) and
-      abs(bottom - float32(n.vel) / 127 * velH - mouse.y) <= 4
+      abs(bottom - float32(n.vel) / 127 * valH - mouse.y) <= 4
   template pts(): untyped = cur().cc[velMode - 1] # the curve shown, in a curve mode
   let volHit = proc(): int = # the curve point under the mouse
     result = -1
     for i, p in pts:
-      if abs(tickX(p.t.float) - mouse.x) <= 6 and abs(bottom - float32(p.v) / 127 * velH - mouse.y) <= 6:
+      if abs(tickX(p.t.float) - mouse.x) <= 6 and abs(bottom - float32(p.v) / 127 * valH - mouse.y) <= 6:
         return i
-  let volVal = proc(): int = clamp(int((bottom - mouse.y) / velH * 127), 0, 127)
+  let volVal = proc(): int = clamp(int((bottom - mouse.y) / valH * 127), 0, 127)
   let loopT = song.clips[song.clip].loopEnd
   if velMode > 0:
     if pts.len == 0: # the default, as a point at the start
@@ -644,7 +645,7 @@ proc pianoRoll() =
       if onLine(n):
         velLine.add i
   if velMode == 0 and velHeld:
-    let v = clamp(int((bottom - mouse.y) / velH * 127), 1, 127)
+    let v = clamp(int((bottom - mouse.y) / valH * 127), 1, 127)
     let anySel = cur().notes.anyIt(it.sel)
     for i, n in cur().notes.mpairs:
       if (n.sel or not anySel) and (abs(tickX(n.start.float) - mouse.x) <= 4 or i in velLine):
@@ -660,7 +661,7 @@ proc pianoRoll() =
       if h in 0 ..< pts.len:
         lines.add line(pts[h].v)
     elif velHeld:
-      lines.add line(clamp(int((bottom - mouse.y) / velH * 127), 1, 127))
+      lines.add line(clamp(int((bottom - mouse.y) / valH * 127), 1, 127))
     else:
       let anySel = cur().notes.anyIt(it.sel)
       for n in cur().notes:
@@ -755,7 +756,7 @@ proc pianoRoll() =
   if velMode > 0:
     dl.pushClipRect(v2(gridX, velTop), v2(right, bottom), true)
     let col = rgb(110, 210, 110)
-    let pt = proc(p: tuple[t, v: int]): ImVec2 = v2(tickX(p.t.float), bottom - float32(p.v) / 127 * velH)
+    let pt = proc(p: tuple[t, v: int]): ImVec2 = v2(tickX(p.t.float), bottom - float32(p.v) / 127 * valH)
     for i, p in pts:
       if i > 0:
         dl.addLine(pt(pts[i - 1]), pt(p), col, 2)
@@ -766,7 +767,7 @@ proc pianoRoll() =
     dl.popClipRect()
   for n in (if velMode == 0: cur().notes else: @[]):
     let x0 = tickX(n.start.float)
-    let vy = bottom - float32(n.vel) / 127 * velH
+    let vy = bottom - float32(n.vel) / 127 * valH
     let c = if n.sel: rgb(255, 255, 85) else: rgb(110, 210, 110)
     dl.addLine(v2(x0, vy), v2(tickX(float(n.start + n.len)), vy), (if n.sel: rgb(255, 255, 85, 90) else: rgb(110, 210, 110, 90)), 2)
     dl.addLine(v2(x0, bottom), v2(x0, vy), c, 2)
