@@ -114,7 +114,7 @@ proc pianoRollWindow*() =
       if n.bend.len < 2: # the two end points, flat
         n.bend = @[(0, 0.0, false), (0, 0.0, false)]
 
-  if st.laneMode == Vel and fired(RollEd, SelectAll, ImGuiKey.A):
+  if not curveFocus and fired(RollEd, SelectAll, ImGuiKey.A):
     if notesOk:
       focused().notes.toggleAll
     else:
@@ -327,7 +327,7 @@ proc pianoRollWindow*() =
     focused().notes.resizeNotes(st.grabbed, snap(t, grid) - n.start - n.len, grid)
     st.lastLen = focused().notes[st.grabbed].len
   of Idle:
-    if st.laneMode == Vel and fired(RollEd, Delete, ImGuiKey.Delete, ctrl = false):
+    if not curveFocus and fired(RollEd, Delete, ImGuiKey.Delete, ctrl = false):
       if notesOk:
         focused().notes.keepItIf(not it.sel)
       else: # the selected middle points
@@ -373,9 +373,9 @@ proc pianoRollWindow*() =
     t >= pts[0].t and t <= loopT and
       abs(bottom - float32(focused().ccAt(curveIdx(), t)) / 127 * valH - mouse.y) <= 6
   if st.laneMode != Vel:
-    if fired(RollEd, SelectAll, ImGuiKey.A):
+    if curveFocus and fired(RollEd, SelectAll, ImGuiKey.A):
       pts.toggleAll
-    if fired(RollEd, Delete, ImGuiKey.Delete, ctrl = false):
+    if curveFocus and fired(RollEd, Delete, ImGuiKey.Delete, ctrl = false):
       pts.keepItIf(not it.sel)
     if curveFocus and (cut or fired(RollEd, Copy, ImGuiKey.C)) and pts.anyIt(it.sel):
       st.ccClip = pts.filterIt(it.sel)
