@@ -8,7 +8,7 @@
 import std/[algorithm, locks, math, os, sequtils, strformat, strutils]
 import imgui
 import wrap/[alsa, filebrowser, gui, slopgs]
-import roll, gm, smm
+import roll, gm, smf, smm
 
 const
   KeyW = 56f32 # note-name column
@@ -1656,7 +1656,7 @@ proc proceed() =
     apply (120.0, newSeq[seq[Track]](1), @[""], newSeq[Placement]())
     smmPath = ""
   of OpenSong:
-    fbOpen(false)
+    fbOpen(0)
   of ExitApp:
     gui.requestClose()
   of Nothing:
@@ -1683,7 +1683,7 @@ proc fileDialogs() =
     if igButton("Save"):
       igCloseCurrentPopup()
       if smmPath == "":
-        fbOpen(true) # `after` happens once the name is picked
+        fbOpen(1) # `after` happens once the name is picked
       elif write(smmPath):
         proceed()
     igSameLine()
@@ -1700,16 +1700,25 @@ proc fileDialogs() =
     if igButton("OK"):
       igCloseCurrentPopup()
     igEndPopup()
-  let opened = fbPick(false)
+  let opened = fbPick(0)
   if opened != nil:
     load $opened
-  let named = fbPick(true)
+  let named = fbPick(1)
   if named != nil:
     var path = $named
     if not path.endsWith ".smm":
       path &= ".smm"
     if write(path):
       proceed()
+  let exported = fbPick(2)
+  if exported != nil:
+    var path = $exported
+    if not path.endsWith ".mid":
+      path &= ".mid"
+    try:
+      writeFile(path, song.toMidi)
+    except CatchableError as e:
+      fail e
 
 proc ui() =
   if igBeginMainMenuBar():
@@ -1721,12 +1730,14 @@ proc ui() =
       if igMenuItem("Save"):
         if smmPath == "":
           after = Nothing
-          fbOpen(true)
+          fbOpen(1)
         else:
           discard write(smmPath)
       if igMenuItem("Save as..."):
         after = Nothing
-        fbOpen(true)
+        fbOpen(1)
+      if igMenuItem("Export..."):
+        fbOpen(2)
       igSeparator()
       if igMenuItem("Exit"):
         ask ExitApp
