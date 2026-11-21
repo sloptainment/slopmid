@@ -10,8 +10,7 @@ import roll
 const
   KeyW = 56f32 # note-name column
   RulerH = 18f32
-  KeyH = 14f32 # one pitch row
-  BeatW = 64f32
+  SbW = 12f32 # scrollbar thickness
   EdgeW = 6f32 # grab zone at a note's right end for resizing
   NewVel = 100
   Snaps = [
@@ -54,11 +53,20 @@ type Drag = enum
   Move
   Resize
 
+type ScrollGrab = enum
+  GrabBody
+  GrabLo
+  GrabHi
+
 var
   snapIdx = 4 # 1/16
   lastLen = Ppq
+  beatW = 64f32 # zoom: pixels per beat
+  keyH = 14f32 # zoom: pixels per pitch row
   scrollX = 0f32
-  scrollY = float32(127 - 84) * KeyH # C6 at the top
+  scrollY = float32(127 - 84) * keyH # C6 at the top
+  sbGrab: ScrollGrab
+  sbOff: float32
   drag = Idle
   dragNote, grabTicks: int
   previewKey = -1
@@ -99,6 +107,101 @@ proc transport() =
     "%s", cstring(&"{t div BarTicks + 1}:{t mod BarTicks div Ppq + 1}:{t mod Ppq:02}")
   )
 
+proc scrollbar(
+    id: cstring,
+    vertical: bool,
+    at: ImVec2,
+    len: float32, # track length = visible pixels
+    scroll, zoom: var float32, # zoom: pixels per unit
+    content, maxZoom: float32, # content length in units
+) =
+  ## Drag the thumb to scroll, its ends to zoom (the far end stays put).
+  let k = len / content # track pixels per unit
+  let size =
+    if vertical:
+      v2(SbW, len)
+    else:
+      v2(len, SbW)
+  igSetCursorScreenPos(at)
+  discard igInvisibleButton(id, size)
+  let io = igGetIO()
+  let mouse = (if vertical: io.mousePos.y - at.y else: io.mousePos.x - at.x)
+  var lo = scroll / zoom * k
+  var hi = (scroll + len) / zoom * k
+  if igIsItemActivated():
+    sbGrab =
+      if abs(mouse - lo) < EdgeW:
+        GrabLo
+      elif abs(mouse - hi) < EdgeW:
+        GrabHi
+      else:
+        GrabBody
+    sbOff =
+      if mouse in lo .. hi:
+        mouse - lo
+      else:
+        (hi - lo) / 2
+  if igIsItemActive():
+    case sbGrab
+    of GrabBody:
+      scroll = (mouse - sbOff) / k * zoom
+    of GrabLo:
+      lo = clamp(mouse, 0, hi - SbW)
+      zoom = len / ((hi - lo) / k)
+      scroll = lo / k * zoom
+    of GrabHi:
+      hi = clamp(mouse, lo + SbW, len)
+      zoom = len / ((hi - lo) / k)
+      scroll = lo / k * zoom
+    zoom = clamp(zoom, k, maxZoom)
+    scroll = clamp(scroll, 0, max(0, content * zoom - len))
+    lo = scroll / zoom * k
+    hi = (scroll + len) / zoom * k
+  let a =
+    if vertical:
+      v2(at.x, at.y + lo)
+    else:
+      v2(at.x + lo, at.y)
+  let b =
+    if vertical:
+      v2(at.x + SbW, at.y + hi)
+    else:
+      v2(at.x + hi, at.y + SbW)
+  let dl = igGetWindowDrawList()
+  dl.addRectFilled(at, v2(at.x + size.x, at.y + size.y), rgb(24, 24, 26))
+  dl.addRectFilled(
+    a,
+    b,
+    if igIsItemActive():
+      rgb(150, 150, 160)
+    else:
+      rgb(100, 100, 110),
+    3,
+  )
+  # the resize hitboxes, brighter under the mouse or while grabbed
+  for (e, g) in [(lo, GrabLo), (hi, GrabHi)]:
+    let hot =
+      if igIsItemActive():
+        sbGrab == g
+      else:
+        igIsItemHovered() and abs(mouse - e) < EdgeW
+    let (e0, e1) = (max(0, e - EdgeW), min(len, e + EdgeW))
+    dl.addRectFilled(
+      if vertical:
+        v2(at.x, at.y + e0)
+      else:
+        v2(at.x + e0, at.y),
+      if vertical:
+        v2(at.x + SbW, at.y + e1)
+      else:
+        v2(at.x + e1, at.y + SbW),
+      if hot:
+        rgb(255, 255, 255)
+      else:
+        rgb(110, 160, 255),
+      3,
+    )
+
 proc pianoRoll() =
   let io = igGetIO()
   let dl = igGetWindowDrawList()
@@ -106,29 +209,29 @@ proc pianoRoll() =
   let avail = igGetContentRegionAvailNonUDT()
   let
     gridX = origin.x + KeyW
-    right = origin.x + avail.x
-    gridW = avail.x - KeyW
-    paneH = (avail.y - RulerH) / 2 # sheet on top, velocity below, in half
+    gridW = avail.x - KeyW - SbW
+    right = gridX + gridW
+    paneH = (avail.y - RulerH - SbW) / 2 # sheet on top, velocity below, in half
     sheetTop = origin.y + RulerH
     velTop = sheetTop + paneH
     bottom = velTop + paneH
     grid = Snaps[snapIdx][1]
     mouse = v2(io.mousePos.x, io.mousePos.y) # imgui's ImVec2 is not cimgui's
 
-  scrollY = clamp(scrollY, 0, max(0, 128 * KeyH - paneH))
+  scrollY = clamp(scrollY, 0, max(0, 128 * keyH - paneH))
   scrollX = max(scrollX, 0)
   proc tickX(t: float): float32 =
-    gridX + float32(t / Ppq.float) * BeatW - scrollX
+    gridX + float32(t / Ppq.float) * beatW - scrollX
 
   # clamp before int(): imgui parks an absent mouse at -FLT_MAX
   proc xTick(x: float32): int =
-    int(max(0, (x - gridX + scrollX) / BeatW * Ppq.float32))
+    int(max(0, (x - gridX + scrollX) / beatW * Ppq.float32))
 
   proc pitchY(p: int): float32 =
-    sheetTop + float32(127 - p) * KeyH - scrollY
+    sheetTop + float32(127 - p) * keyH - scrollY
 
   proc yPitch(y: float32): int =
-    127 - int(clamp((y - sheetTop + scrollY) / KeyH, 0, 127))
+    127 - int(clamp((y - sheetTop + scrollY) / keyH, 0, 127))
 
   # --- input ---
   igSetCursorScreenPos(v2(origin.x, sheetTop))
@@ -148,10 +251,15 @@ proc pianoRoll() =
 
   if keysHovered or sheetHovered or igIsItemHovered():
     if io.keyShift:
-      scrollX -= io.mouseWheel * BeatW
+      scrollX -= io.mouseWheel * beatW
     else:
-      scrollY -= io.mouseWheel * KeyH * 3
-    scrollX -= io.mouseWheelH * BeatW
+      scrollY -= io.mouseWheel * keyH * 3
+    scrollX -= io.mouseWheelH * beatW
+
+  let beats = float32(song.loopEnd + 4 * BarTicks) / Ppq.float32
+    # room to add past the end
+  scrollbar("scrollX", false, v2(gridX, bottom), gridW, scrollX, beatW, beats, 256)
+  scrollbar("scrollY", true, v2(right, sheetTop), paneH, scrollY, keyH, 128, 40)
 
   # clicking a key plays it; dragging across keys glides
   let key =
@@ -224,7 +332,7 @@ proc pianoRoll() =
         rgb(30, 30, 34)
       else:
         rgb(220, 220, 220)
-    dl.addRectFilled(v2(origin.x, y), v2(gridX - 1, y + KeyH - 1), col)
+    dl.addRectFilled(v2(origin.x, y), v2(gridX - 1, y + keyH - 1), col)
     dl.addText(
       v2(origin.x + 4, y),
       if black:
@@ -241,7 +349,7 @@ proc pianoRoll() =
     let y = pitchY(q)
     dl.addRectFilled(
       v2(gridX, y),
-      v2(right, y + KeyH),
+      v2(right, y + keyH),
       if Names[q mod 12].len == 2:
         rgb(40, 44, 50)
       else:
@@ -279,9 +387,9 @@ proc pianoRoll() =
       (tickX(n.start.float), tickX(float(n.start + n.len)), pitchY(n.pitch))
     let shade = 90 + n.vel
     dl.addRectFilled(
-      v2(x0, y + 1), v2(x1, y + KeyH - 1), rgb(shade div 2, shade, shade div 2), 2
+      v2(x0, y + 1), v2(x1, y + keyH - 1), rgb(shade div 2, shade, shade div 2), 2
     )
-    dl.addRect(v2(x0, y + 1), v2(x1, y + KeyH - 1), rgb(10, 30, 10), 2)
+    dl.addRect(v2(x0, y + 1), v2(x1, y + keyH - 1), rgb(10, 30, 10), 2)
   dl.popClipRect()
   for n in song.notes:
     let x0 = tickX(n.start.float)
