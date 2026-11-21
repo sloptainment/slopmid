@@ -437,8 +437,15 @@ proc pianoRoll() =
   of Box:
     discard
   of Resize:
+    # the dragged note, or its whole selection, changes length by the same ticks
     let n = cur().notes[dragNote]
-    cur().notes[dragNote].len = max(grid, snap(t, grid) - n.start)
+    var d = snap(t, grid) - n.start - n.len
+    for i, m in cur().notes:
+      if (if n.sel: m.sel else: i == dragNote):
+        d = max(d, grid - m.len)
+    for i, m in cur().notes.mpairs:
+      if (if n.sel: m.sel else: i == dragNote):
+        m.len += d
     lastLen = cur().notes[dragNote].len
   of Idle:
     if igIsWindowFocused() and igIsKeyPressed(ImGuiKey.Delete, false) and not io.wantTextInput:
