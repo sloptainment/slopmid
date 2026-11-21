@@ -210,7 +210,10 @@ proc pianoRollWindow*() =
 
   # --- bend points: a point is (note, index into its `bend`) ---
   proc bendXY(n: Note, k: int): ImVec2 =
-    v2(tickX(float(n.start + n.bendTick(k))), pitchY(n.pitch) + st.view.rowH / 2 - float32(n.bend[k].v) * st.view.rowH)
+    # the end points sit inside the note, so a note's end and the next one's start read as two points (o-oo-o)
+    let inset = min(7f32, (tickX(float(n.start + n.len)) - tickX(n.start.float)) / 4)
+    let ex = if k == 0: inset elif k == n.bend.high: -inset else: 0f32
+    v2(tickX(float(n.start + n.bendTick(k))) + ex, pitchY(n.pitch) + st.view.rowH / 2 - float32(n.bend[k].v) * st.view.rowH)
   proc bendVal(n: Note): float = # the mouse's height as semitones from `n`
     clamp(float((pitchY(n.pitch) + st.view.rowH / 2 - mouse.y) / st.view.rowH), -BendRange.float, BendRange.float)
   proc bendHit(): tuple[note, pt: int] = # the point under the mouse
