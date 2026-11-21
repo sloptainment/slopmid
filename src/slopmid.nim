@@ -1620,6 +1620,7 @@ proc apply(s: Smm) =
   clipNames = s.names
   placeClip.setLen 0
   pSel = -1
+  focusTrack = -1 # the old index may not exist in `s`; focus() reads cur()
   focus(0, -1)
   undoStack.setLen 0
   redoStack.setLen 0
