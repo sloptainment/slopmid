@@ -12,7 +12,6 @@ const
   RulerH = 18f32
   SbW = 12f32 # scrollbar thickness
   EdgeW = 6f32 # grab zone at a note's right end for resizing
-  NewVel = 100
   Snaps = [
     ("Bar", BarTicks),
     ("1/2", Ppq * 2),
@@ -61,6 +60,7 @@ type ScrollGrab = enum
 var
   snapIdx = 4 # 1/16
   lastLen = Ppq
+  lastVel = 100 # velocity of the last clicked or dragged note
   beatW = 64f32 # zoom: pixels per beat
   keyH = 14f32 # zoom: pixels per pitch row
   scrollX = 0f32
@@ -305,13 +305,14 @@ proc pianoRoll() =
   if sheetHovered and igIsMouseClicked(ImGuiMouseButton.Left):
     if hit < 0:
       song.notes.add Note(
-        start: max(0, snapDown(t, grid)), len: lastLen, pitch: p, vel: NewVel
+        start: max(0, snapDown(t, grid)), len: lastLen, pitch: p, vel: lastVel
       )
       hit = song.notes.high
     dragNote = hit
     drag = if onEdge: Resize else: Move
     grabTicks = t - song.notes[hit].start
     lastLen = song.notes[hit].len
+    lastVel = song.notes[hit].vel
   if not igIsMouseDown(ImGuiMouseButton.Left):
     drag = Idle
   case drag
@@ -332,6 +333,7 @@ proc pianoRoll() =
     for n in song.notes.mitems:
       if abs(tickX(n.start.float) - mouse.x) <= 4:
         n.vel = v
+        lastVel = v
 
   # tooltip: the value being dragged, else the velocity of the bar under the mouse
   if velHeld or velHovered:
