@@ -247,6 +247,11 @@ proc pianoRoll() =
   if igIsItemActive():
     velFrac = clamp((bottom - io.mousePos.y) / bothH, 0.1, 0.9)
 
+  # click or drag on the ruler moves the playhead
+  igSetCursorScreenPos(v2(gridX, origin.y))
+  discard igInvisibleButton("ruler", v2(gridW, RulerH))
+  if igIsItemActive():
+    song.pos = xTick(mouse.x).float
   igSetCursorScreenPos(v2(origin.x, sheetTop))
   discard igInvisibleButton("keys", v2(KeyW, paneH))
   let keysHeld = igIsItemActive()
