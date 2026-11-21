@@ -1,0 +1,48 @@
+{
+  "items": {
+    "imgui": {
+      "dir": "$deps/imgui",
+      "url": "https://github.com/nimgl/imgui",
+      "commit": "0151ce087d2e8f7e03aaa5b8358900b5ced9af4e",
+      "version": ""
+    },
+    "nimgl": {
+      "dir": "$deps/nimgl",
+      "url": "https://github.com/nimgl/nimgl",
+      "commit": "309d6ed8164ad184ed5bbb171c9f3d9d1c11ff81",
+      "version": ""
+    }
+  },
+  "nimcfg": [
+    "############# begin Atlas config section ##########",
+    "--noNimblePath",
+    "--path:\"deps/imgui/src\"",
+    "--path:\"deps/nimgl/src\"",
+    "############# end Atlas config section   ##########",
+    ""
+  ],
+  "nimbleFile": {
+    "filename": "slopmid.nimble",
+    "content": [
+      "version       = \"0.1.0\"",
+      "author        = \"Zumi\"",
+      "description   = \"Simple piano roll on slopgs\"",
+      "license       = \"MIT\"",
+      "srcDir        = \"src\"",
+      "bin           = @[\"slopmid\"]",
+      "backend       = \"cpp\"",
+      "",
+      "requires \"nim >= 2.2.10\"",
+      "requires \"https://github.com/nimgl/imgui\"",
+      "",
+      "requires \"https://github.com/nimgl/nimgl\"",
+      "",
+      ""
+    ]
+  },
+  "hostOS": "linux",
+  "hostCPU": "amd64",
+  "nimVersion": "2.2.12",
+  "gccVersion": "15.2.1",
+  "clangVersion": "18.1.8"
+}

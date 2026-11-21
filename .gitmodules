@@ -1,0 +1,3 @@
+[submodule "deps/slopgs"]
+	path = deps/slopgs
+	url = https://github.com/sloptainment/slopgs.git
