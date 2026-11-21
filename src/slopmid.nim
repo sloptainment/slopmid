@@ -322,6 +322,17 @@ proc pianoRoll() =
   if igIsWindowFocused() and io.keyCtrl and igIsKeyPressed(ImGuiKey.D, false) and not io.wantTextInput:
     for n in cur().notes.mitems:
       n.sel = false
+  if igIsWindowFocused() and (io.keyCtrl or io.keyShift) and not io.wantTextInput:
+    let up = igIsKeyPressed(ImGuiKey.UpArrow, true)
+    if up or igIsKeyPressed(ImGuiKey.DownArrow, true):
+      let anySel = cur().notes.anyIt(it.sel)
+      var d = (if io.keyCtrl: 12 else: 1) * (if up: 1 else: -1)
+      for n in cur().notes: # the whole group stops at the edge, keeping its shape
+        if n.sel or not anySel:
+          d = clamp(d, -n.pitch, 127 - n.pitch)
+      for n in cur().notes.mitems:
+        if n.sel or not anySel:
+          n.pitch += d
 
   # click or drag on the ruler moves the playhead
   igSetCursorScreenPos(v2(gridX, origin.y))
