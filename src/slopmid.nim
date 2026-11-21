@@ -8,14 +8,11 @@
 import std/[locks, math, os, sequtils, strformat, strutils]
 import imgui
 import wrap/[alsa, filebrowser, gui, slopgs]
-import model, edit, player, gm, smf, smm
+import model, edit, player, gm, smf, smm, view
 
 const
   KeyW = 56f32 # note-name column
-  RulerH = 18f32
-  SbW = 12f32 # scrollbar thickness
   HdrW = 108f32 # lane numbers and mute/solo in the song window
-  EdgeW = 6f32 # grab zone at a note's right end for resizing
   Snaps = [ # name, ticks, triplet (grid lines go to 1/3 of a beat)
     ("Bar", BarTicks, false),
     ("1/2", Ppq * 2, false),
@@ -90,19 +87,11 @@ type Tool = enum
   Select
   Bend ## the piano roll only
 
-type ScrollGrab = enum
-  GrabBody
-  GrabLo
-  GrabHi
-
 var
   snapIdx = 7 # 1/16
   lastLen = Ppq
   lastVel = 100 # velocity of the last clicked or dragged note
-  beatW = 64f32 # zoom: pixels per beat
-  keyH = 14f32 # zoom: pixels per pitch row
-  scrollX = 0f32
-  scrollY = float32(127 - 84) * keyH # C6 at the top
+  rollView = View(beatW: 64, rowH: 14, scrollY: float32(127 - 84) * 14, rows: 128, maxRowH: 160) # row = 127 - pitch; C6 at the top
   velMode = 0 # velocity lane's combo: Vel, Vol, Exp, Pan; a curve's index in `Track.cc` is velMode - 1
   volDrag = -1 # index of the curve point being dragged
   bendNote = -1 # the note whose bend point is being dragged, and which point of its `bend`
@@ -110,8 +99,6 @@ var
   bendBox: bool # a selection box of bend points is being dragged, from `boxA`
   ptBoxA: ImVec2 # where the lane's selection box started, relative to the scrolled lane
   velFrac = 0.25f32 # share of the sheet+velocity height taken by the velocity lane
-  sbGrab: ScrollGrab
-  sbOff: float32
   drag = Idle
   tool = Draw
   boxA: ImVec2 # where the selection box started, relative to the scrolled sheet
@@ -120,10 +107,7 @@ var
   previewKey = -1
   focusTrack = -1 # in clip song.clip; -1 = none
   noTrack: Track # stands in for the focused track while there is none
-  songBeatW = 16f32 # the song window's zoom and scroll, like the roll's
-  laneH = 28f32
-  songScrollX = 0f32
-  songScrollY = 0f32
+  songView = View(beatW: 16, rowH: 28, rows: Lanes, maxRowH: 320) # row = lane
   pdrag = PIdle
   pIdx, pGrab: int
   pSel = -1 # the clicked placement, drawn with a white border
@@ -153,12 +137,6 @@ proc cur(): var Track =
     result = song.clips[song.clip].tracks[focusTrack]
   else:
     result = noTrack
-
-proc rgb(r, g, b: int, a = 255): uint32 =
-  uint32(r) or uint32(g) shl 8 or uint32(b) shl 16 or uint32(a) shl 24
-
-proc v2(x, y: float32): ImVec2 =
-  ImVec2(x: x, y: y)
 
 proc noteName(p: int): string =
   if cur().rhythm and p - DrumLow in 0 .. DrumNames.high:
@@ -204,101 +182,6 @@ proc transport() =
       song.songMode = mode
       song.playing = false
     igSameLine()
-
-proc scrollbar(
-    id: cstring,
-    vertical: bool,
-    at: ImVec2,
-    len: float32, # track length = visible pixels
-    scroll, zoom: var float32, # zoom: pixels per unit
-    content, maxZoom: float32, # content length in units
-) =
-  ## Drag the thumb to scroll, its ends to zoom (the far end stays put).
-  let k = len / content # track pixels per unit
-  let size =
-    if vertical:
-      v2(SbW, len)
-    else:
-      v2(len, SbW)
-  igSetCursorScreenPos(at)
-  discard igInvisibleButton(id, size)
-  let io = igGetIO()
-  let mouse = (if vertical: io.mousePos.y - at.y else: io.mousePos.x - at.x)
-  var lo = scroll / zoom * k
-  var hi = (scroll + len) / zoom * k
-  if igIsItemActivated():
-    sbGrab =
-      if abs(mouse - lo) < EdgeW:
-        GrabLo
-      elif abs(mouse - hi) < EdgeW:
-        GrabHi
-      else:
-        GrabBody
-    sbOff =
-      if mouse in lo .. hi:
-        mouse - lo
-      else:
-        (hi - lo) / 2
-  if igIsItemActive():
-    case sbGrab
-    of GrabBody:
-      scroll = (mouse - sbOff) / k * zoom
-    of GrabLo:
-      lo = clamp(mouse, 0, hi - SbW)
-      zoom = len / ((hi - lo) / k)
-      scroll = lo / k * zoom
-    of GrabHi:
-      hi = max(mouse, lo + SbW) # past the track end zooms out beyond fit
-      zoom = len / ((hi - lo) / k)
-      scroll = lo / k * zoom
-    zoom = clamp(zoom, k / 4, maxZoom)
-    scroll = clamp(scroll, 0, max(0, content * zoom - len))
-    lo = scroll / zoom * k
-    hi = (scroll + len) / zoom * k
-  let a =
-    if vertical:
-      v2(at.x, at.y + lo)
-    else:
-      v2(at.x + lo, at.y)
-  let b =
-    if vertical:
-      v2(at.x + SbW, at.y + min(hi, len))
-    else:
-      v2(at.x + min(hi, len), at.y + SbW)
-  let dl = igGetWindowDrawList()
-  dl.addRectFilled(at, v2(at.x + size.x, at.y + size.y), rgb(24, 24, 26))
-  dl.addRectFilled(
-    a,
-    b,
-    if igIsItemActive():
-      rgb(150, 150, 160)
-    else:
-      rgb(100, 100, 110),
-    3,
-  )
-  # the resize hitboxes, brighter under the mouse or while grabbed
-  for (e, g) in [(lo, GrabLo), (hi, GrabHi)]:
-    let hot =
-      if igIsItemActive():
-        sbGrab == g
-      else:
-        igIsItemHovered() and abs(mouse - e) < EdgeW
-    let (e0, e1) = (max(0, e - EdgeW), min(len, e + EdgeW))
-    dl.addRectFilled(
-      if vertical:
-        v2(at.x, at.y + e0)
-      else:
-        v2(at.x + e0, at.y),
-      if vertical:
-        v2(at.x + SbW, at.y + e1)
-      else:
-        v2(at.x + e1, at.y + SbW),
-      if hot:
-        rgb(255, 255, 255)
-      else:
-        rgb(110, 160, 255),
-      3,
-    )
 
 iterator playLines(): float =
   ## Clip time of each playhead line in the current clip: one per playing placement in song mode.
@@ -363,20 +246,18 @@ proc pianoRoll() =
     grid = Snaps[snapIdx][1]
     mouse = v2(io.mousePos.x, io.mousePos.y) # imgui's ImVec2 is not cimgui's
 
-  scrollY = clamp(scrollY, 0, max(0, 128 * keyH - paneH))
-  scrollX = max(scrollX, 0)
+  rollView.place(gridX, origin.y, gridW, paneH)
   proc tickX(t: float): float32 =
-    gridX + float32(t / Ppq.float) * beatW - scrollX
+    rollView.tickX(t)
 
-  # clamp before int(): imgui parks an absent mouse at -FLT_MAX
   proc xTick(x: float32): int =
-    int(max(0, (x - gridX + scrollX) / beatW * Ppq.float32))
+    rollView.xTick(x)
 
   proc pitchY(p: int): float32 =
-    sheetTop + float32(127 - p) * keyH - scrollY
+    rollView.rowY(127 - p)
 
   proc yPitch(y: float32): int =
-    127 - int(clamp((y - sheetTop + scrollY) / keyH, 0, 127))
+    127 - rollView.yRow(y)
 
   # --- input ---
   # drag the border between sheet and velocity lane; first submitted item wins
@@ -427,10 +308,9 @@ proc pianoRoll() =
     cur().notes.transpose(semis)
 
   # click or drag on the ruler moves the playhead
-  igSetCursorScreenPos(v2(gridX, origin.y))
-  discard igInvisibleButton("ruler", v2(gridW, RulerH))
-  if igIsItemActive():
-    song.clipPos = xTick(mouse.x).float
+  let rulerTick = rollView.ruler(mouse)
+  if rulerTick >= 0:
+    song.clipPos = rulerTick.float
 
   igSetCursorScreenPos(v2(origin.x, sheetTop))
   discard igInvisibleButton("keys", v2(KeyW, paneH))
@@ -468,31 +348,10 @@ proc pianoRoll() =
           cur().ccRes = i
       igEndCombo()
 
-  if keysHovered or sheetHovered or igIsItemHovered():
-    if io.keyShift:
-      scrollX -= io.mouseWheel * beatW
-    else:
-      scrollY -= io.mouseWheel * keyH * 3
-    scrollX -= io.mouseWheelH * beatW
-
   let beats = float32(song.clips[song.clip].loopEnd + 4 * BarTicks) / Ppq.float32
     # room to add past the end
-  if sheetPan:
-    if io.keyCtrl: # zoom about the mouse: right/up zooms in
-      let u = (mouse.x - gridX + scrollX) / beatW
-      let v = (mouse.y - sheetTop + scrollY) / keyH
-      beatW = clamp(beatW * exp(io.mouseDelta.x * 0.01), gridW / beats / 4, 1024)
-      keyH = clamp(keyH * exp(-io.mouseDelta.y * 0.01), paneH / 128 / 4, 160)
-      scrollX = u * beatW - (mouse.x - gridX)
-      scrollY = v * keyH - (mouse.y - sheetTop)
-    else:
-      scrollX -= io.mouseDelta.x
-      scrollY -= io.mouseDelta.y
-  # clamp after the input above, or the frame draws past the edge
-  scrollY = clamp(scrollY, 0, max(0, 128 * keyH - paneH))
-  scrollX = max(scrollX, 0)
-  scrollbar("scrollX", false, v2(gridX, bottom), gridW, scrollX, beatW, beats, 1024)
-  scrollbar("scrollY", true, v2(right, sheetTop), paneH, scrollY, keyH, 128, 160)
+  rollView.navigate(keysHovered or sheetHovered or igIsItemHovered(), sheetPan, mouse, beats)
+  rollView.scrollbars(beats, bottom)
 
   let t = xTick(mouse.x)
   let p = yPitch(mouse.y)
@@ -510,9 +369,9 @@ proc pianoRoll() =
 
   # --- bend points: a point is (note, index into its `bend`) ---
   proc bendXY(n: Note, k: int): ImVec2 =
-    v2(tickX(float(n.start + n.bendTick(k))), pitchY(n.pitch) + keyH / 2 - float32(n.bend[k].v) * keyH)
+    v2(tickX(float(n.start + n.bendTick(k))), pitchY(n.pitch) + rollView.rowH / 2 - float32(n.bend[k].v) * rollView.rowH)
   proc bendVal(n: Note): float = # the mouse's height as semitones from `n`
-    clamp(float((pitchY(n.pitch) + keyH / 2 - mouse.y) / keyH), -BendRange.float, BendRange.float)
+    clamp(float((pitchY(n.pitch) + rollView.rowH / 2 - mouse.y) / rollView.rowH), -BendRange.float, BendRange.float)
   proc bendHit(): tuple[note, pt: int] = # the point under the mouse
     result = (-1, -1)
     for i in countdown(cur().notes.high, 0):
@@ -562,11 +421,11 @@ proc pianoRoll() =
           bendNote = -1
       else:
         bendBox = true
-        boxA = v2(mouse.x - gridX + scrollX, mouse.y - sheetTop + scrollY)
+        boxA = v2(mouse.x - gridX + rollView.scrollX, mouse.y - sheetTop + rollView.scrollY)
     if not igIsMouseDown(ImGuiMouseButton.Left):
       if bendBox: # the points in the box get selected
-        let (bx0, bx1) = (min(boxA.x + gridX - scrollX, mouse.x), max(boxA.x + gridX - scrollX, mouse.x))
-        let (by0, by1) = (min(boxA.y + sheetTop - scrollY, mouse.y), max(boxA.y + sheetTop - scrollY, mouse.y))
+        let (bx0, bx1) = (min(boxA.x + gridX - rollView.scrollX, mouse.x), max(boxA.x + gridX - rollView.scrollX, mouse.x))
+        let (by0, by1) = (min(boxA.y + sheetTop - rollView.scrollY, mouse.y), max(boxA.y + sheetTop - rollView.scrollY, mouse.y))
         for n in cur().notes.mitems:
           for k in n.bendIdx:
             let q = bendXY(n, k)
@@ -608,16 +467,16 @@ proc pianoRoll() =
         cur().notes[hit].sel = true
     else:
       drag = Box
-      boxA = v2(mouse.x - gridX + scrollX, mouse.y - sheetTop + scrollY)
+      boxA = v2(mouse.x - gridX + rollView.scrollX, mouse.y - sheetTop + rollView.scrollY)
   # the box in screen space; touched notes get selected on release
-  let (bx0, bx1) = (min(boxA.x + gridX - scrollX, mouse.x), max(boxA.x + gridX - scrollX, mouse.x))
-  let (by0, by1) = (min(boxA.y + sheetTop - scrollY, mouse.y), max(boxA.y + sheetTop - scrollY, mouse.y))
+  let (bx0, bx1) = (min(boxA.x + gridX - rollView.scrollX, mouse.x), max(boxA.x + gridX - rollView.scrollX, mouse.x))
+  let (by0, by1) = (min(boxA.y + sheetTop - rollView.scrollY, mouse.y), max(boxA.y + sheetTop - rollView.scrollY, mouse.y))
   if not igIsMouseDown(ImGuiMouseButton.Left):
     if drag == Box:
       for n in cur().notes.mitems:
         let touched =
           tickX(n.start.float) <= bx1 and tickX(float(n.start + n.len)) >= bx0 and
-          pitchY(n.pitch) <= by1 and pitchY(n.pitch) + keyH >= by0
+          pitchY(n.pitch) <= by1 and pitchY(n.pitch) + rollView.rowH >= by0
         if touched:
           n.sel = true
         elif not io.keyShift:
@@ -710,10 +569,10 @@ proc pianoRoll() =
               p.sel = false
           pts[volDrag].sel = true
         elif volDrag < 0: # empty space: a box
-          ptBoxA = v2(mouse.x - gridX + scrollX, mouse.y)
+          ptBoxA = v2(mouse.x - gridX + rollView.scrollX, mouse.y)
       elif volDrag < 0: # a click on empty space adds a point, at the snap
         addPt(volVal())
-    let (bx0, bx1) = (min(ptBoxA.x + gridX - scrollX, mouse.x), max(ptBoxA.x + gridX - scrollX, mouse.x))
+    let (bx0, bx1) = (min(ptBoxA.x + gridX - rollView.scrollX, mouse.x), max(ptBoxA.x + gridX - rollView.scrollX, mouse.x))
     let (by0, by1) = (min(ptBoxA.y, mouse.y), max(ptBoxA.y, mouse.y))
     if tool == Select and volDrag == -1 and velUp: # a box ends: the points in it get selected
       for i, p in pts:
@@ -783,7 +642,7 @@ proc pianoRoll() =
         rgb(30, 30, 34)
       else:
         rgb(220, 220, 220)
-    dl.addRectFilled(v2(origin.x, y), v2(gridX - 1, y + keyH - 1), col)
+    dl.addRectFilled(v2(origin.x, y), v2(gridX - 1, y + rollView.rowH - 1), col)
     dl.addText(
       v2(origin.x + 4, y),
       if black:
@@ -800,7 +659,7 @@ proc pianoRoll() =
     let y = pitchY(q)
     dl.addRectFilled(
       v2(gridX, y),
-      v2(right, y + keyH),
+      v2(right, y + rollView.rowH),
       if Names[q mod 12].len == 2:
         rgb(40, 44, 50)
       else:
@@ -810,23 +669,7 @@ proc pianoRoll() =
   dl.pushClipRect(v2(gridX, origin.y), v2(right, bottom), true)
   dl.addRectFilled(v2(gridX, origin.y), v2(right, sheetTop), rgb(30, 30, 30))
   dl.addRectFilled(v2(gridX, velTop), v2(right, bottom), rgb(34, 36, 40))
-  let step = if Snaps[snapIdx][2]: Ppq div 3 else: Ppq div 4
-  var gt = xTick(gridX).snapDown(step)
-  while gt <= xTick(right):
-    let x = tickX(gt.float)
-    let col =
-      if gt mod BarTicks == 0:
-        rgb(20, 20, 20)
-      elif gt mod Ppq == 0:
-        rgb(32, 34, 38)
-      else:
-        rgb(44, 48, 54)
-    dl.addLine(v2(x, sheetTop), v2(x, bottom), col)
-    if gt mod BarTicks == 0:
-      dl.addText(
-        v2(x + 3, origin.y + 1), rgb(200, 200, 200), cstring($(gt div BarTicks + 1))
-      )
-    gt += step
+  rollView.drawGrid(dl, if Snaps[snapIdx][2]: Ppq div 3 else: Ppq div 4, bottom)
   dl.addLine(
     v2(gridX, velTop),
     v2(right, velTop),
@@ -844,21 +687,21 @@ proc pianoRoll() =
     let shade = 90 + n.vel
     dl.addRectFilled(
       v2(x0, y + 1),
-      v2(x1, y + keyH - 1),
+      v2(x1, y + rollView.rowH - 1),
       if n.sel: rgb(shade, shade, shade div 3) else: rgb(shade div 2, shade, shade div 2),
       2,
     )
-    dl.addRect(v2(x0, y + 1), v2(x1, y + keyH - 1), if n.sel: rgb(255, 255, 255) else: rgb(10, 30, 10), 2)
+    dl.addRect(v2(x0, y + 1), v2(x1, y + rollView.rowH - 1), if n.sel: rgb(255, 255, 255) else: rgb(10, 30, 10), 2)
     let name = noteName(n.pitch) # faded, only where the whole name fits inside the note
-    if keyH >= igGetTextLineHeight() and x1 - x0 >= igCalcTextSizeNonUDT(cstring(name)).x + 6:
-      dl.addText(v2(x0 + 3, y + (keyH - igGetTextLineHeight()) / 2), rgb(0, 0, 0, 120), cstring(name))
+    if rollView.rowH >= igGetTextLineHeight() and x1 - x0 >= igCalcTextSizeNonUDT(cstring(name)).x + 6:
+      dl.addText(v2(x0 + 3, y + (rollView.rowH - igGetTextLineHeight()) / 2), rgb(0, 0, 0, 120), cstring(name))
   let notes = cur().notes
   for i, a in notes: # same-pitch notes sounding together: red on the shared ticks only
     for b in notes[i + 1 ..< notes.len]: # ponytail: O(n^2) pairs, sort by pitch if big clips lag
       let (s, e) = (max(a.start, b.start), min(a.start + a.len, b.start + b.len))
       if a.pitch == b.pitch and s < e:
         let y = pitchY(a.pitch)
-        dl.addRectFilled(v2(tickX(s.float), y + 1), v2(tickX(e.float), y + keyH - 1), rgb(255, 30, 30), 2)
+        dl.addRectFilled(v2(tickX(s.float), y + 1), v2(tickX(e.float), y + rollView.rowH - 1), rgb(255, 30, 30), 2)
   if tool == Bend:
     # a point or segment is black where another note's bend wins the track's wheel there
     # ponytail: O(notes^2) per frame; fine for a clip's worth of notes
@@ -892,7 +735,7 @@ proc pianoRoll() =
     for p in pts:
       dl.addCircleFilled(pt(p), 4, if p.sel: rgb(255, 255, 85) else: col)
     if tool == Select and velHeld and volDrag == -1:
-      let (bx0, bx1) = (min(ptBoxA.x + gridX - scrollX, mouse.x), max(ptBoxA.x + gridX - scrollX, mouse.x))
+      let (bx0, bx1) = (min(ptBoxA.x + gridX - rollView.scrollX, mouse.x), max(ptBoxA.x + gridX - rollView.scrollX, mouse.x))
       let (by0, by1) = (min(ptBoxA.y, mouse.y), max(ptBoxA.y, mouse.y))
       dl.addRectFilled(v2(bx0, by0), v2(bx1, by1), rgb(66, 150, 250, 50))
       dl.addRect(v2(bx0, by0), v2(bx1, by1), rgb(66, 150, 250))
@@ -1088,25 +931,23 @@ proc songPlaylist() =
     grid = Snaps[snapIdx][1]
     mouse = v2(io.mousePos.x, io.mousePos.y)
 
-  songScrollY = clamp(songScrollY, 0, max(0, Lanes.float32 * laneH - paneH))
-  songScrollX = max(songScrollX, 0)
+  songView.place(gridX, origin.y, gridW, paneH)
   proc tickX(t: float): float32 =
-    gridX + float32(t / Ppq.float) * songBeatW - songScrollX
+    songView.tickX(t)
 
   proc xTick(x: float32): int =
-    int(max(0, (x - gridX + songScrollX) / songBeatW * Ppq.float32))
+    songView.xTick(x)
 
   proc laneY(l: int): float32 =
-    laneTop + l.float32 * laneH - songScrollY
+    songView.rowY(l)
 
   proc yLane(y: float32): int =
-    int(clamp((y - laneTop + songScrollY) / laneH, 0, Lanes - 1))
+    songView.yRow(y)
 
   # --- input ---
-  igSetCursorScreenPos(v2(gridX, origin.y))
-  discard igInvisibleButton("ruler", v2(gridW, RulerH))
-  if igIsItemActive():
-    song.songPos = xTick(mouse.x).float
+  let rulerTick = songView.ruler(mouse)
+  if rulerTick >= 0:
+    song.songPos = rulerTick.float
   igSetCursorScreenPos(v2(gridX, laneTop))
   discard igInvisibleButton(
     "grid",
@@ -1116,28 +957,9 @@ proc songPlaylist() =
   )
   let hovered = igIsItemHovered()
   let pan = igIsItemActive() and igIsMouseDown(ImGuiMouseButton.Middle)
-  if hovered:
-    if io.keyShift:
-      songScrollX -= io.mouseWheel * songBeatW
-    else:
-      songScrollY -= io.mouseWheel * laneH * 3
-    songScrollX -= io.mouseWheelH * songBeatW
   let beats = float32(song.songEnd + 16 * BarTicks) / Ppq.float32 # room to add past the end
-  if pan:
-    if io.keyCtrl: # zoom about the mouse: right/up zooms in
-      let u = (mouse.x - gridX + songScrollX) / songBeatW
-      let v = (mouse.y - laneTop + songScrollY) / laneH
-      songBeatW = clamp(songBeatW * exp(io.mouseDelta.x * 0.01), gridW / beats / 4, 1024)
-      laneH = clamp(laneH * exp(-io.mouseDelta.y * 0.01), paneH / Lanes.float32 / 4, 320)
-      songScrollX = u * songBeatW - (mouse.x - gridX)
-      songScrollY = v * laneH - (mouse.y - laneTop)
-    else:
-      songScrollX -= io.mouseDelta.x
-      songScrollY -= io.mouseDelta.y
-  songScrollY = clamp(songScrollY, 0, max(0, Lanes.float32 * laneH - paneH))
-  songScrollX = max(songScrollX, 0)
-  scrollbar("scrollX", false, v2(gridX, bottom), gridW, songScrollX, songBeatW, beats, 1024)
-  scrollbar("scrollY", true, v2(right, laneTop), paneH, songScrollY, laneH, Lanes.float32, 320)
+  songView.navigate(hovered, pan, mouse, beats)
+  songView.scrollbars(beats, bottom)
 
   toolButtons(songTool, origin)
   if fired("Song", SelectAll, ImGuiKey.A):
@@ -1190,12 +1012,12 @@ proc songPlaylist() =
         song.placements[hit].sel = true
     else:
       pdrag = PBox
-      pBoxA = v2(mouse.x - gridX + songScrollX, mouse.y - laneTop + songScrollY)
+      pBoxA = v2(mouse.x - gridX + songView.scrollX, mouse.y - laneTop + songView.scrollY)
     if pdrag in {PMove, PTrimL, PTrimR}:
       pOrig = song.placements
   # the box in screen space; touched placements get selected on release
-  let (bx0, bx1) = (min(pBoxA.x + gridX - songScrollX, mouse.x), max(pBoxA.x + gridX - songScrollX, mouse.x))
-  let (by0, by1) = (min(pBoxA.y + laneTop - songScrollY, mouse.y), max(pBoxA.y + laneTop - songScrollY, mouse.y))
+  let (bx0, bx1) = (min(pBoxA.x + gridX - songView.scrollX, mouse.x), max(pBoxA.x + gridX - songView.scrollX, mouse.x))
+  let (by0, by1) = (min(pBoxA.y + laneTop - songView.scrollY, mouse.y), max(pBoxA.y + laneTop - songView.scrollY, mouse.y))
   proc moving(i: int): bool =
     song.placements.moves(pIdx, pdrag, i)
 
@@ -1204,7 +1026,7 @@ proc songPlaylist() =
       for p in song.placements.mitems:
         let touched =
           tickX(p.start.float) <= bx1 and tickX(float(p.start + p.len)) >= bx0 and
-          laneY(p.lane) <= by1 and laneY(p.lane) + laneH >= by0
+          laneY(p.lane) <= by1 and laneY(p.lane) + songView.rowH >= by0
         if touched:
           p.sel = true
         elif not io.keyShift:
@@ -1233,45 +1055,34 @@ proc songPlaylist() =
   # --- drawing ---
   dl.pushClipRect(v2(origin.x, laneTop), v2(gridX, bottom), true)
   for l in 0 ..< Lanes:
-    dl.addRectFilled(v2(origin.x, laneY(l)), v2(gridX - 1, laneY(l) + laneH - 1), rgb(44, 46, 52))
+    dl.addRectFilled(v2(origin.x, laneY(l)), v2(gridX - 1, laneY(l) + songView.rowH - 1), rgb(44, 46, 52))
   dl.popClipRect()
   dl.pushClipRect(v2(gridX, origin.y), v2(right, bottom), true)
   for l in 0 ..< Lanes:
     dl.addRectFilled(
       v2(gridX, laneY(l)),
-      v2(right, laneY(l) + laneH),
+      v2(right, laneY(l) + songView.rowH),
       if l mod 2 == 0: rgb(52, 56, 62) else: rgb(46, 50, 56),
     )
   dl.addRectFilled(v2(gridX, origin.y), v2(right, laneTop), rgb(30, 30, 30)) # over the rows scrolled up
-  let step = if Snaps[snapIdx][2]: Ppq div 3 else: Ppq
-  var gt = xTick(gridX).snapDown(step)
-  while gt <= xTick(right):
-    let x = tickX(gt.float)
-    dl.addLine(
-      v2(x, laneTop),
-      v2(x, bottom),
-      if gt mod BarTicks == 0: rgb(20, 20, 20) elif gt mod Ppq == 0: rgb(38, 40, 44) else: rgb(46, 48, 52),
-    )
-    if gt mod BarTicks == 0:
-      dl.addText(v2(x + 3, origin.y + 1), rgb(200, 200, 200), cstring($(gt div BarTicks + 1)))
-    gt += step
+  songView.drawGrid(dl, if Snaps[snapIdx][2]: Ppq div 3 else: Ppq, bottom)
   dl.popClipRect()
 
   dl.pushClipRect(v2(gridX, laneTop), v2(right, bottom), true)
   for i, p in song.placements:
     let (x0, x1, y) = (tickX(p.start.float), tickX(float(p.start + p.len)), laneY(p.lane))
     dl.addRectFilled(
-      v2(x0, y + 1), v2(x1, y + laneH - 2),
+      v2(x0, y + 1), v2(x1, y + songView.rowH - 2),
       if pBlocked and moving(i): rgb(200, 50, 50)
       else: rgb(70 + p.clip * 67 mod 100, 100 + p.clip * 131 mod 90, 150 + p.clip * 43 mod 80),
       2,
     )
     dl.addRect(
-      v2(x0, y + 1), v2(x1, y + laneH - 2),
+      v2(x0, y + 1), v2(x1, y + songView.rowH - 2),
       if i == pSel or p.sel: rgb(255, 255, 255) else: rgb(10, 10, 10), 2,
     )
     let loop = song.clips[p.clip].loopEnd
-    dl.pushClipRect(v2(x0, y), v2(x1, y + laneH), true)
+    dl.pushClipRect(v2(x0, y), v2(x1, y + songView.rowH), true)
     var (lo, hi) = (127, 0) # pitch range of the clip, spread over the box height
     for t in song.clips[p.clip].tracks:
       for n in t.notes:
@@ -1279,7 +1090,7 @@ proc songPlaylist() =
         hi = max(hi, n.pitch)
     let hh = igGetTextLineHeight() + 2 # title header
     dl.addRectFilled(v2(x0, y + 1), v2(x1, y + 1 + hh), rgb(0, 0, 0, 70), 2)
-    let (top, body) = (y + 1 + hh + 1, laneH - 3 - hh - 2) # the rest of the box
+    let (top, body) = (y + 1 + hh + 1, songView.rowH - 3 - hh - 2) # the rest of the box
     let nh = max(1f32, body / float32(hi - lo + 1)) # ponytail: no cap, a one-pitch clip fills the body
     var base = p.start - p.offset # where the clip starts, repeating every `loop`
     while body >= 2 and base < p.start + p.len:
@@ -1296,7 +1107,7 @@ proc songPlaylist() =
     dl.popClipRect()
     var m = p.start + loop - p.offset # where the clip starts over
     while m < p.start + p.len:
-      dl.addLine(v2(tickX(m.float), y + 1), v2(tickX(m.float), y + laneH - 2), rgb(255, 255, 255), 2)
+      dl.addLine(v2(tickX(m.float), y + 1), v2(tickX(m.float), y + songView.rowH - 2), rgb(255, 255, 255), 2)
       m += loop
   if pdrag == PBox:
     dl.addRectFilled(v2(bx0, by0), v2(bx1, by1), rgb(66, 150, 250, 50))
@@ -1307,13 +1118,13 @@ proc songPlaylist() =
   dl.popClipRect()
 
   # lane numbers and mute/solo, after the backgrounds
-  if laneH >= 22: # smaller rows would overlap
+  if songView.rowH >= 22: # smaller rows would overlap
     igPushClipRect(v2(origin.x, laneTop), v2(gridX, bottom), true)
     for l in 0 ..< Lanes:
       let y = laneY(l)
-      if y + laneH < laneTop or y > bottom:
+      if y + songView.rowH < laneTop or y > bottom:
         continue
-      igSetCursorScreenPos(v2(origin.x + 4, y + (laneH - igGetFrameHeight()) / 2))
+      igSetCursorScreenPos(v2(origin.x + 4, y + (songView.rowH - igGetFrameHeight()) / 2))
       igPushID(int32(l))
       igText("%s", cstring($(l + 1)))
       igSameLine()
