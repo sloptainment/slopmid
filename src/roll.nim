@@ -6,7 +6,7 @@ const
   Ppq* = 96 ## ticks per beat
   BarTicks* = 4 * Ppq ## 4/4 only
   Drums* = 9 ## MIDI channel 10, where rhythm tracks go
-  PreviewCh* = 15 ## key previews, kept out of the dispatch pool
+  PreviewCh* = 15 ## key previews; their own synth, so the song may use it too
 
 type
   Note* = object
@@ -126,7 +126,7 @@ proc advance*(s: var Song, frames, rate: int): seq[Msg] =
           ch = Drums
         else:
           for c in 0 .. 15:
-            if c notin [Drums, PreviewCh] and s.sounding.allIt(it.ch != c):
+            if c != Drums and s.sounding.allIt(it.ch != c):
               ch = c
               break
       if ch < 0: # all channels busy: the note is dropped
@@ -209,4 +209,10 @@ when isMainModule:
   var r = Song(bpm: 120, playing: true, clips: @[@[Track(rhythm: true, program: 8)]])
   r.nt = @[Note(start: 0, len: Ppq, pitch: 36, vel: 100)]
   doAssert r.advance(1024, 22050)[^1] == (0, 0x99, 36, 100).Msg
+  # 15 simultaneous melodic tracks fill every channel but the drums, including 15
+  var m = Song(bpm: 120, playing: true, clips: @[newSeq[Track](16)])
+  for t in 0 ..< 16:
+    m.clips[0][t].notes = @[Note(start: 0, len: Ppq, pitch: 60 + t, vel: 100)]
+  let chs = m.advance(1024, 22050).keys.filterIt(it.status shr 4 == 9).mapIt(it.status and 15)
+  doAssert chs.len == 15 and 15 in chs and Drums notin chs, $chs
   echo "roll: ok"

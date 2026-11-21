@@ -31,19 +31,23 @@ var
   song = Song(bpm: 120, clips: newSeq[seq[Track]](1))
   live: seq[(int, int, int)] # key previews, played at the next block's top
   pcm: Pcm
+  synth, previewSynth: Synth # separate engines: the song keeps all 16 channels
   audio: Thread[void]
 
 proc audioLoop() {.thread.} =
-  var buf: Block
+  var buf, pbuf: Block
   while true:
     {.cast(gcsafe).}:
       withLock(lock):
         for (status, d1, d2) in live:
-          slopgs.midi(0, status, d1, d2)
+          slopgs.midi(previewSynth, 0, status, d1, d2)
         live.setLen(0)
         for m in song.advance(BlockFrames, Rate):
-          slopgs.midi(m.offset, m.status, m.d1, m.d2)
-        slopgs.render(buf)
+          slopgs.midi(synth, m.offset, m.status, m.d1, m.d2)
+        slopgs.render(synth, buf)
+        slopgs.render(previewSynth, pbuf)
+      for i in 0 ..< buf.len:
+        buf[i] = clamp(buf[i].int + pbuf[i].int, int16.low.int, int16.high.int).int16
       pcm.write(buf)
 
 # --- UI state, UI thread only ---
@@ -628,13 +632,13 @@ proc ui() =
     igEnd()
 
 proc main() =
-  slopgs.init(
+  let dlsPath =
     if paramCount() >= 1:
       paramStr(1)
     else:
       getAppDir() / "deps/slopgs/dist/gm.dls"
-  )
-  slopgs.gsReset()
+  synth = slopgs.open(dlsPath)
+  previewSynth = slopgs.open(dlsPath)
   pcm = alsa.open(Rate, LatencyUs)
   initLock(lock)
   createThread(audio, audioLoop)
