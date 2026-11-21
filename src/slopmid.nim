@@ -3,7 +3,7 @@
 ## Select tool (corner buttons): drag a box to select, drag a selected note to move them all, Delete removes them; Ctrl+A selects all, Ctrl+Q quantizes the selection's starts and ends to the snap.
 ## Wheel scrolls pitch, Shift+wheel scrolls time, middle-drag pans, Ctrl+middle-drag zooms. Space plays/pauses.
 
-import std/[locks, math, os, sequtils, strformat]
+import std/[locks, math, os, sequtils, strformat, strutils]
 import imgui
 import wrap/[alsa, gui, slopgs]
 import roll, gm
@@ -540,24 +540,28 @@ proc pianoRoll() =
       live.add (0x90 or ch, key, vel)
     previewKey = key
 
-  # dragging in the velocity lane sets the notes whose bar is under the mouse
+  # dragging in the velocity lane sets the selected notes (all, if none) whose bar is under the mouse
   if velHeld:
     let v = clamp(int((bottom - mouse.y) / velH * 127), 1, 127)
+    let anySel = cur().notes.anyIt(it.sel)
     for n in cur().notes.mitems:
-      if abs(tickX(n.start.float) - mouse.x) <= 4:
+      if (n.sel or not anySel) and abs(tickX(n.start.float) - mouse.x) <= 4:
         n.vel = v
         lastVel = v
 
-  # tooltip: the value being dragged, else the velocity of the bar under the mouse
+  # tooltip: the value being dragged, else one line per note the drag would set
   if velHeld or velHovered:
-    var shown = if velHeld: clamp(int((bottom - mouse.y) / velH * 127), 1, 127) else: 0
-    if not velHeld:
+    var lines: seq[string]
+    let line = proc(v: int): string = fmt"{v} - {int(round(v / 127 * 100))}%"
+    if velHeld:
+      lines.add line(clamp(int((bottom - mouse.y) / velH * 127), 1, 127))
+    else:
+      let anySel = cur().notes.anyIt(it.sel)
       for n in cur().notes:
-        if abs(tickX(n.start.float) - mouse.x) <= 4:
-          shown = n.vel
-          break
-    if shown > 0:
-      igSetTooltip("%s", cstring(fmt"{shown} - {int(round(shown / 127 * 100))}%"))
+        if (n.sel or not anySel) and abs(tickX(n.start.float) - mouse.x) <= 4:
+          lines.add noteName(n.pitch) & ": " & line(n.vel)
+    if lines.len > 0:
+      igSetTooltip("%s", cstring(lines.join("\n")))
 
   # --- drawing ---
   # note names
@@ -645,8 +649,9 @@ proc pianoRoll() =
   for n in cur().notes:
     let x0 = tickX(n.start.float)
     let vy = bottom - float32(n.vel) / 127 * velH
-    dl.addLine(v2(x0, bottom), v2(x0, vy), rgb(110, 210, 110), 2)
-    dl.addCircleFilled(v2(x0, vy), 4, rgb(110, 210, 110))
+    let c = if n.sel: rgb(255, 255, 85) else: rgb(110, 210, 110)
+    dl.addLine(v2(x0, bottom), v2(x0, vy), c, 2)
+    dl.addCircleFilled(v2(x0, vy), 4, c)
 
   for c in playLines():
     dl.addLine(v2(tickX(c), origin.y), v2(tickX(c), bottom), rgb(255, 255, 255, 180))
