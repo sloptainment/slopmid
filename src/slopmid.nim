@@ -2,7 +2,7 @@
 ## right-click deletes. Note names: click to audition. Velocity lane: drag.
 ## Wheel scrolls pitch, Shift+wheel scrolls time. Space plays/pauses.
 
-import std/[locks, os, strformat]
+import std/[locks, math, os, strformat]
 import imgui
 import wrap/[alsa, gui, slopgs]
 import roll
@@ -261,6 +261,7 @@ proc pianoRoll() =
   igSetCursorScreenPos(v2(gridX, velTop))
   discard igInvisibleButton("vel", v2(gridW, velH))
   let velHeld = igIsItemActive()
+  let velHovered = igIsItemHovered()
 
   if keysHovered or sheetHovered or igIsItemHovered():
     if io.keyShift:
@@ -331,6 +332,17 @@ proc pianoRoll() =
     for n in song.notes.mitems:
       if abs(tickX(n.start.float) - mouse.x) <= 4:
         n.vel = v
+
+  # tooltip: the value being dragged, else the velocity of the bar under the mouse
+  if velHeld or velHovered:
+    var shown = if velHeld: clamp(int((bottom - mouse.y) / velH * 127), 1, 127) else: 0
+    if not velHeld:
+      for n in song.notes:
+        if abs(tickX(n.start.float) - mouse.x) <= 4:
+          shown = n.vel
+          break
+    if shown > 0:
+      igSetTooltip("%s", cstring(fmt"{shown} - {int(round(shown / 127 * 100))}%"))
 
   # --- drawing ---
   # note names
