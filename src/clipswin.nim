@@ -45,6 +45,22 @@ proc clipsWindow*() =
     igTableSetupColumn("", ImGuiTableColumnFlags.WidthStretch, 1)
     let dl = igGetWindowDrawList()
     let span = song.clips[song.clip].loopEnd.float32
+    # the timeline, above the previews: click or drag sets the clip's playhead
+    igTableNextRow()
+    for _ in 0 .. 3:
+      discard igTableNextColumn()
+    let tl = igGetCursorScreenPosNonUDT()
+    let tw = max(igGetContentRegionAvailNonUDT().x, 1)
+    discard igInvisibleButton("timeline", v2(tw, RulerH))
+    if igIsItemActive():
+      song.clipPos = clamp((igGetIO().mousePos.x - tl.x) / tw * span, 0, span - 1)
+    for b in 0 ..< int(span) div BarTicks:
+      let x = tl.x + b.float32 * BarTicks.float32 / span * tw
+      dl.addLine(v2(x, tl.y), v2(x, tl.y + RulerH), rgb(200, 200, 200))
+      dl.addText(v2(x + 3, tl.y + 1), rgb(200, 200, 200), cstring($(b + 1)))
+    for c in playLines():
+      let x = tl.x + c / span * tw
+      dl.addLine(v2(x, tl.y), v2(x, tl.y + RulerH), rgb(255, 255, 255, 180))
     for i in 0 ..< song.clips[song.clip].tracks.len:
       igTableNextRow()
       igPushID(int32(i))
