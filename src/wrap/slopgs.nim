@@ -36,7 +36,7 @@ var dls: string
 
 proc open*(dlsPath: string): Synth =
   ## A new engine on `dlsPath`, GS-reset (it ignores bank select, CC0/CC32,
-  ## until that has run). Its memory is never freed.
+  ## until that has run). Free it with `close`; the song's and preview's never are.
   if dls.len == 0:
     dls = readFile(dlsPath)
   let n = msgs_size(0)
@@ -45,6 +45,10 @@ proc open*(dlsPath: string): Synth =
     raise newException(IOError, dlsPath & " is not a usable gm.dls")
   var msg = [0x41'u8, 0x10, 0x42, 0x12, 0x40, 0x00, 0x7F, 0x00, 0x41, 0xF7]
   synth_sysex(result, msg[0].addr, msg.len.uint32) # after the F0
+
+proc close*(s: Synth) =
+  ## Frees `s`: the engine keeps everything in the one block `open` allocated, nothing elsewhere.
+  deallocShared(s.pointer)
 
 proc midi*(s: Synth, offset, status, d1, d2: int) =
   ## A short message, acting `offset` frames into the next `render`.

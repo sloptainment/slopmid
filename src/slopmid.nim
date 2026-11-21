@@ -55,15 +55,16 @@ proc ui() =
   let free = not io.wantTextInput and not igIsPopupOpen("", cast[ImGuiPopupFlags](ord(ImGuiPopupFlags.AnyPopupId) or ord(ImGuiPopupFlags.AnyPopupLevel)))
   proc hot(k: ImGuiKey, shift = false): bool =
     free and io.keyCtrl and io.keyShift == shift and igIsKeyPressed(k, false)
-  var (hNew, hOpen, hSave, hSaveAs, hExport) =
-    (hot(ImGuiKey.N), hot(ImGuiKey.O), hot(ImGuiKey.S), hot(ImGuiKey.S, true), hot(ImGuiKey.E))
+  var (hNew, hOpen, hSave, hSaveAs, hExport, hWav) =
+    (hot(ImGuiKey.N), hot(ImGuiKey.O), hot(ImGuiKey.S), hot(ImGuiKey.S, true), hot(ImGuiKey.E), false)
   if igBeginMainMenuBar():
     if igBeginMenu("File"):
       hNew = igMenuItem("New", "Ctrl+N") or hNew
       hOpen = igMenuItem("Open...", "Ctrl+O") or hOpen
       hSave = igMenuItem("Save", "Ctrl+S") or hSave
       hSaveAs = igMenuItem("Save as...", "Ctrl+Shift+S") or hSaveAs
-      hExport = igMenuItem("Export...", "Ctrl+E") or hExport
+      hExport = igMenuItem("Export MIDI...", "Ctrl+E") or hExport
+      hWav = igMenuItem("Export WAV...")
       igSeparator()
       if igMenuItem("Exit"):
         confirm ExitApp
@@ -96,7 +97,7 @@ proc ui() =
         discard
       igEndMenu()
     igEndMainMenuBar()
-  fileCommands(hNew, hOpen, hSave, hSaveAs, hExport)
+  fileCommands(hNew, hOpen, hSave, hSaveAs, hExport, hWav)
   # a bar under the menu: the work area shrinks, so no window can cover it
   if igBeginViewportSideBar(
     "transport",

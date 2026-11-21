@@ -1,8 +1,8 @@
-## Files: New, Open, Save, Save as and Export, and the prompts about unsaved changes.
+## Files: New, Open, Save, Save as, Export and Export WAV, and the prompts about unsaved changes.
 import std/strutils
 import imgui
 import wrap/[filebrowser, gui]
-import model, smf, smm, common, history
+import model, smf, audio, smm, common, history
 
 type Pending* = enum ## what to do once unsaved changes are dealt with
   Nothing
@@ -14,13 +14,14 @@ const
   OpenDlg = 0
   SaveDlg = 1
   ExportDlg = 2
+  WavDlg = 3
 
 var
   smmPath: string # "" = never saved
   saved = capture() # the state at the last save, load or new
   savedBpm = song.bpm
   pending: Pending
-  openPrompt, openErr: bool # popups are opened at the top level, not from inside a menu
+  openPrompt, openErr, wavPrompt: bool # popups are opened at the top level, not from inside a menu
   fileErr: string
 
 proc markSaved() =
@@ -96,6 +97,16 @@ proc fileDialogs*() =
   if openErr:
     igOpenPopup("File error")
     openErr = false
+  if wavPrompt:
+    igOpenPopup("Exporting WAV")
+    wavPrompt = false
+  if igBeginPopupModal("Exporting WAV", nil, ImGuiWindowFlags.AlwaysAutoResize):
+    igProgressBar(wavProgress(), v2(300, 0))
+    if not wavBusy():
+      igCloseCurrentPopup()
+      fileErr = wavFinish()
+      openErr = fileErr != ""
+    igEndPopup()
   if igBeginPopupModal("Save changes?", nil, ImGuiWindowFlags.AlwaysAutoResize):
     igText("The song has unsaved changes.")
     if igButton("Save"):
@@ -137,8 +148,15 @@ proc fileDialogs*() =
       writeFile(path, song.toMidi)
     except CatchableError as e:
       showError e
+  let wav = fbPick(WavDlg)
+  if wav != nil:
+    var path = $wav
+    if not path.endsWith ".wav":
+      path &= ".wav"
+    exportWav(song, path)
+    wavPrompt = true
 
-proc fileCommands*(hNew, hOpen, hSave, hSaveAs, hExport: bool) =
+proc fileCommands*(hNew, hOpen, hSave, hSaveAs, hExport, hWav: bool) =
   ## What the File menu or its shortcuts picked this frame.
   if hNew:
     confirm NewSong
@@ -155,3 +173,5 @@ proc fileCommands*(hNew, hOpen, hSave, hSaveAs, hExport: bool) =
     fbOpen(SaveDlg)
   if hExport:
     fbOpen(ExportDlg)
+  if hWav:
+    fbOpen(WavDlg)

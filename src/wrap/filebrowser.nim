@@ -1,4 +1,4 @@
-## imgui-filebrowser, a header-only C++ widget, behind two calls; `i`: 0 open, 1 save, 2 export (see filebrowser.h).
+## imgui-filebrowser, a header-only C++ widget, behind two calls; `i`: 0 open, 1 save, 2 export MIDI, 3 export WAV (see filebrowser.h).
 import std/os
 
 const deps = currentSourcePath.parentDir / ".." / ".." / "deps"
