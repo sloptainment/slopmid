@@ -143,7 +143,7 @@ var
   placeClip: seq[Placement] # Ctrl+C in the song window
 
 type Cmd = enum
-  None, SelectAll, Duplicate, Copy, Paste, Quantize, Delete, SemiUp, SemiDown, OctUp, OctDown
+  None, Undo, Redo, SelectAll, Duplicate, Copy, Paste, Quantize, Delete, SemiUp, SemiDown, OctUp, OctDown
 
 var
   menuCmd: Cmd # picked in the Edit menu this frame
@@ -1527,10 +1527,76 @@ proc songPlaylist() =
       igPopID()
     igPopClipRect()
 
+type Snap = object ## what undo restores; selection and mute/solo cleared, so they don't count as edits
+  clips: seq[seq[Track]]
+  placements: seq[Placement]
+  names: seq[string]
+
+var
+  undoStack, redoStack: seq[Snap]
+  last: Snap # the state at the last commit
+
+proc `==`(a, b: Snap): bool =
+  a.clips == b.clips and a.placements == b.placements and a.names == b.names
+
+proc capture(): Snap =
+  # ponytail: copies the whole song every idle frame; diff or dirty flag if big songs lag
+  result = Snap(clips: song.clips, placements: song.placements, names: clipNames)
+  for c in result.clips.mitems:
+    for t in c.mitems:
+      t.mute = false
+      t.solo = false
+      for n in t.notes.mitems:
+        n.sel = false
+        for p in n.bend.mitems:
+          p.sel = false
+      for cc in t.cc.mitems:
+        for p in cc.mitems:
+          p.sel = false
+  for p in result.placements.mitems:
+    p.sel = false
+
+proc restore(s: Snap) =
+  let old = song.clips[song.clip]
+  song.clips = s.clips
+  song.placements = s.placements
+  clipNames = s.names
+  song.clip = min(song.clip, song.clips.high)
+  for i in 0 ..< min(old.len, song.clips[song.clip].len): # mute/solo aren't undone
+    song.clips[song.clip][i].mute = old[i].mute
+    song.clips[song.clip][i].solo = old[i].solo
+  if focusTrack >= song.clips[song.clip].len:
+    focusTrack = -1
+  pSel = -1
+
+proc history() =
+  ## Once no mouse button or text field is busy: an edit since the last commit becomes an undo step; then handle undo/redo.
+  let io = igGetIO()
+  if igIsMouseDown(ImGuiMouseButton.Left) or igIsMouseDown(ImGuiMouseButton.Right) or io.wantTextInput:
+    return
+  let now = capture()
+  if now != last:
+    undoStack.add last
+    redoStack.setLen 0
+    last = now
+  let z = io.keyCtrl and igIsKeyPressed(ImGuiKey.Z, false)
+  let redo = menuCmd == Redo or (io.keyCtrl and igIsKeyPressed(ImGuiKey.Y, false)) or (z and io.keyShift)
+  let undo = menuCmd == Undo or (z and not io.keyShift)
+  if redo and redoStack.len > 0:
+    undoStack.add last
+    last = redoStack.pop
+    restore last
+  elif undo and undoStack.len > 0:
+    redoStack.add last
+    last = undoStack.pop
+    restore last
+
 proc ui() =
   if igBeginMainMenuBar():
     if igBeginMenu("Edit"): # acts on the piano roll or song window, whichever you used last
       for (c, name, keys) in [
+        (Undo, "Undo", "Ctrl+Z"),
+        (Redo, "Redo", "Ctrl+Shift+Z"),
         (SelectAll, "Select all / none", "Ctrl+A"),
         (Duplicate, "Duplicate", "Ctrl+D"),
         (Copy, "Copy", "Ctrl+C"),
@@ -1589,6 +1655,7 @@ proc ui() =
     if igBegin("Song", nil, ImGuiWindowFlags.NoScrollbar or ImGuiWindowFlags.NoScrollWithMouse):
       songPlaylist()
     igEnd()
+  history()
   menuCmd = None
 
 proc main() =
@@ -1601,6 +1668,7 @@ proc main() =
   previewSynth = slopgs.open(dlsPath)
   pcm = alsa.open(Rate, LatencyUs)
   initLock(lock)
+  last = capture()
   createThread(audio, audioLoop)
   gui.open("slopmid", 1280, 800)
   while gui.running():
