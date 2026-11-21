@@ -1,6 +1,6 @@
 ## Sheet: left-click adds a note or drags it, its right end resizes it,
 ## right-click deletes. Note names: click to audition. Velocity lane: drag.
-## Select tool (corner buttons): drag a box to select, drag a selected note to move them all, Delete removes them; Ctrl+A selects all, Ctrl+Q quantizes the selection's starts and ends to the snap.
+## Select tool (corner buttons): drag a box to select, drag a selected note to move them all, Delete removes them; Ctrl+A selects all (or deselects, if anything is selected), Ctrl+D duplicates the selection after its last note, Ctrl+Q quantizes the selection's starts and ends to the snap.
 ## Wheel scrolls pitch, Shift+wheel scrolls time, middle-drag pans, Ctrl+middle-drag zooms. Space plays/pauses.
 
 import std/[locks, math, os, sequtils, strformat, strutils]
@@ -365,11 +365,23 @@ proc pianoRoll() =
   toolButtons(tool, origin)
 
   if igIsWindowFocused() and io.keyCtrl and igIsKeyPressed(ImGuiKey.A, false) and not io.wantTextInput:
+    let all = not cur().notes.anyIt(it.sel) # anything selected: deselect instead
     for n in cur().notes.mitems:
-      n.sel = true
+      n.sel = all
   if igIsWindowFocused() and io.keyCtrl and igIsKeyPressed(ImGuiKey.D, false) and not io.wantTextInput:
-    for n in cur().notes.mitems:
-      n.sel = false
+    let sel = cur().notes.filterIt(it.sel)
+    if sel.len > 0:
+      let first = sel.mapIt(it.start).min
+      var at = sel.mapIt(it.start + it.len).max # right after the last note ends
+      let bar = (at + BarTicks - 1) div BarTicks * BarTicks
+      if grid < Ppq div 4 and bar - at <= grid: # fine snap: don't leave a sliver before the bar
+        at = bar
+      for n in cur().notes.mitems:
+        n.sel = false
+      for n in sel:
+        var m = n
+        m.start += at - first
+        cur().notes.add m
   if igIsWindowFocused() and io.keyCtrl and igIsKeyPressed(ImGuiKey.Q, false) and not io.wantTextInput:
     for n in cur().notes.mitems:
       if n.sel:
@@ -815,7 +827,7 @@ proc fits(i: int, p: Placement): bool =
 
 proc songPlaylist() =
   ## Lanes of placed clips. Draw tool: click empty space to place the clip chosen in Clips (drag before releasing to position it),
-  ## right-click removes. Select tool: drag a box to select; Delete removes the selection, Ctrl+A/D selects all/none.
+  ## right-click removes. Select tool: drag a box to select; Delete removes the selection, Ctrl+A selects all, or deselects if anything is selected.
   ## Either tool: drag to move (a selection moves together), drag an edge to trim (the left one starts the clip part-way in,
   ## the right one past its end repeats it, and moves the whole selection's right edges). A drop that would overlap
   ## in a lane draws red and goes back. Panning and zooming as in the piano roll.
@@ -886,11 +898,9 @@ proc songPlaylist() =
 
   toolButtons(songTool, origin)
   if igIsWindowFocused() and io.keyCtrl and igIsKeyPressed(ImGuiKey.A, false) and not io.wantTextInput:
+    let all = not song.placements.anyIt(it.sel) # anything selected: deselect instead
     for p in song.placements.mitems:
-      p.sel = true
-  if igIsWindowFocused() and io.keyCtrl and igIsKeyPressed(ImGuiKey.D, false) and not io.wantTextInput:
-    for p in song.placements.mitems:
-      p.sel = false
+      p.sel = all
   if igIsWindowFocused() and io.keyCtrl and igIsKeyPressed(ImGuiKey.Q, false) and not io.wantTextInput:
     for i in 0 ..< song.placements.len:
       var p = song.placements[i]
