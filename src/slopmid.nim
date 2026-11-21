@@ -252,6 +252,7 @@ proc pianoRoll() =
   discard igInvisibleButton("ruler", v2(gridW, RulerH))
   if igIsItemActive():
     song.pos = xTick(mouse.x).float
+
   igSetCursorScreenPos(v2(origin.x, sheetTop))
   discard igInvisibleButton("keys", v2(KeyW, paneH))
   let keysHeld = igIsItemActive()
@@ -440,12 +441,18 @@ proc pianoRoll() =
 
 var
   togglePianoRoll = true
+  toggleClips = true
   firstFrame = true
+
+proc clips() =
+  discard
 
 proc ui() =
   if igBeginMainMenuBar():
     if igBeginMenu("Window"):
       if igCheckbox("Piano roll", addr togglePianoRoll):
+        discard
+      if igCheckbox("Clips", addr toggleClips):
         discard
       igEndMenu()
     igEndMainMenuBar()
@@ -461,12 +468,19 @@ proc ui() =
   igEnd()
   # after the bars, so the dockspace fills what they leave
   let space = igDockSpaceOverViewport()
-  if firstFrame: # default layout: the piano roll fills the dockspace
-    igDockBuilderDockWindow("Piano roll", space)
+  if firstFrame: # default layout
+    var left, right: ImGuiID
+    discard igDockBuilderSplitNode(space, ImGuiDir.Left, 0.5, addr left, addr right)
+    igDockBuilderDockWindow("Clips", left)
+    igDockBuilderDockWindow("Piano roll", right)
     firstFrame = false
   if togglePianoRoll:
     if igBegin("Piano roll"):
       pianoRoll()
+    igEnd()
+  if toggleClips:
+    if igBegin("Clips"):
+      clips()
     igEnd()
 
 proc main() =
