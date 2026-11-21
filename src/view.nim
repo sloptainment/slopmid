@@ -2,12 +2,7 @@
 ## Wheel, pan and zoom input, the two scrollbars, the ruler and the grid lines.
 import std/math
 import imgui
-import model
-
-const
-  RulerH* = 18f32
-  SbW* = 12f32 # scrollbar thickness
-  EdgeW* = 6f32 # grab zone at an edge: a scrollbar thumb's end (zooms), a note's right end (resizes)
+import model, common
 
 type
   View* = object
@@ -29,12 +24,6 @@ type
 var
   sbGrab: ScrollGrab
   sbOff: float32
-
-proc rgb*(r, g, b: int, a = 255): uint32 =
-  uint32(r) or uint32(g) shl 8 or uint32(b) shl 16 or uint32(a) shl 24
-
-proc v2*(x, y: float32): ImVec2 =
-  ImVec2(x: x, y: y)
 
 proc clampScroll(v: var View) =
   v.scrollY = clamp(v.scrollY, 0, max(0, v.rows.float32 * v.rowH - v.h))

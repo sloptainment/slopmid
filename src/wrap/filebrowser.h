@@ -1,4 +1,5 @@
 /* imgui-filebrowser (C++) as two calls. Index 0 picks an existing .smm, 1 names a new one, 2 names a .mid to export. */
+#include "imgui.h"
 #include "imfilebrowser.h"
 #include <string>
 
