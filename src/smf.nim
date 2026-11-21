@@ -99,9 +99,9 @@ proc toMidi*(song: Song): string =
 
 when isMainModule:
   # one bar, a note on beat 1 (a beat long), one on a drum track at beat 2, 120 BPM = 500000 us/beat
-  var s = Song(bpm: 120, songMode: true, clips: @[@[Track(program: 5), Track(rhythm: true)]])
-  s.clips[0][0].notes = @[Note(start: 0, len: Ppq, pitch: 60, vel: 100)]
-  s.clips[0][1].notes = @[Note(start: Ppq, len: 24, pitch: 36, vel: 90)]
+  var s = Song(bpm: 120, songMode: true, clips: @[Clip(tracks: @[Track(program: 5), Track(rhythm: true)])])
+  s.clips[0].tracks[0].notes = @[Note(start: 0, len: Ppq, pitch: 60, vel: 100)]
+  s.clips[0].tracks[1].notes = @[Note(start: Ppq, len: 24, pitch: 36, vel: 90)]
   s.placements = @[Placement(clip: 0, start: 0, len: BarTicks)]
   let m = s.toMidi
   doAssert m[0 ..< 14] == "MThd\0\0\0\6\0\1\0\3\0\x60", m[0 ..< 14] # type 1, tempo + channels 0 and 9, 96 ppq
@@ -113,10 +113,10 @@ when isMainModule:
   doAssert "\xB0\x07\x64\0\x0B\x7F\0\x0A\x40" in m, "CC 7, 11, 10 share one status byte"
   doAssert m.len > 14 and m[^3 .. ^1] == "\xFF\x2F\0"
   # a muted track gets no MIDI track; a program change on a reused channel in the same bank sends no bank select again
-  var u = Song(bpm: 120, songMode: true, clips: @[@[Track(program: 5), Track(program: 7), Track(program: 9, mute: true)]])
-  u.clips[0][0].notes = @[Note(start: 0, len: Ppq, pitch: 60, vel: 100)]
-  u.clips[0][1].notes = @[Note(start: 2 * Ppq, len: Ppq, pitch: 62, vel: 100)]
-  u.clips[0][2].notes = @[Note(start: 0, len: Ppq, pitch: 64, vel: 100)]
+  var u = Song(bpm: 120, songMode: true, clips: @[Clip(tracks: @[Track(program: 5), Track(program: 7), Track(program: 9, mute: true)])])
+  u.clips[0].tracks[0].notes = @[Note(start: 0, len: Ppq, pitch: 60, vel: 100)]
+  u.clips[0].tracks[1].notes = @[Note(start: 2 * Ppq, len: Ppq, pitch: 62, vel: 100)]
+  u.clips[0].tracks[2].notes = @[Note(start: 0, len: Ppq, pitch: 64, vel: 100)]
   u.placements = s.placements
   let um = u.toMidi
   doAssert um[10 ..< 12] == "\0\2" and um.count("MTrk") == 2 and um.count("\xB0\0\0") == 1 and "\xC0\7" in um

@@ -42,7 +42,7 @@ const
 # --- shared with the audio thread, under `lock` ---
 var
   lock: Lock
-  song = Song(bpm: 120, clips: newSeq[seq[Track]](1))
+  song = Song(bpm: 120, clips: newSeq[Clip](1))
   live: seq[(int, int, int)] # key previews, played at the next block's top
   pcm: Pcm
   synth, previewSynth: Synth # separate engines: the song keeps all 16 channels
@@ -126,7 +126,6 @@ var
   previewKey = -1
   focusTrack = -1 # in clip song.clip; -1 = none
   noTrack: Track # stands in for the focused track while there is none
-  clipNames = @[""] # parallel to song.clips; "" shows as "Clip N"
   songBeatW = 16f32 # the song window's zoom and scroll, like the roll's
   laneH = 28f32
   songScrollX = 0f32
@@ -170,7 +169,7 @@ proc songPos(): var float =
 
 proc cur(): var Track =
   if focusTrack >= 0:
-    result = song.clips[song.clip][focusTrack]
+    result = song.clips[song.clip].tracks[focusTrack]
   else:
     result = noTrack
 
@@ -189,9 +188,9 @@ proc transport() =
   let io = igGetIO()
   if igButton(if song.playing: "Pause" else: "Play", v2(60, 0)) or
       (igIsKeyPressed(ImGuiKey.Space, false) and not io.wantTextInput):
-    song.playing = (song.songMode or song.clips[song.clip].len > 0) and not song.playing
+    song.playing = (song.songMode or song.clips[song.clip].tracks.len > 0) and not song.playing
   igSameLine()
-  if igButton("Stop", v2(60, 0)) and (song.songMode or song.clips[song.clip].len > 0):
+  if igButton("Stop", v2(60, 0)) and (song.songMode or song.clips[song.clip].tracks.len > 0):
     song.playing = false
     song.pos = 0
   igSameLine()
@@ -1058,7 +1057,7 @@ proc focus(clip, track: int) =
       p.sel = false
   if clip != song.clip:
     pSel = -1
-    for t in song.clips[song.clip].mitems:
+    for t in song.clips[song.clip].tracks.mitems:
       t.mute = false
       t.solo = false
   song.clip = clip
@@ -1068,7 +1067,7 @@ proc focus(clip, track: int) =
     song.pos = 0
 
 proc clipLabel(i: int): string =
-  if clipNames[i] == "": &"Clip {i + 1}" else: clipNames[i]
+  if song.clips[i].name == "": &"Clip {i + 1}" else: song.clips[i].name
 
 proc clips() =
   igText("Clip:")
@@ -1081,15 +1080,13 @@ proc clips() =
     igEndCombo()
   igSameLine()
   if igButton("Add"):
-    song.clips.add newSeq[Track]()
-    clipNames.add ""
+    song.clips.add Clip()
     focus(song.clips.high, -1)
   igSameLine()
   if igButton("Remove") and song.clips.len > 1:
     let gone = song.clip
     focus(gone, -1)
     song.clips.delete gone
-    clipNames.delete gone
     song.placements.keepItIf(it.clip != gone)
     placeClip.setLen 0 # its clip numbers are stale
     pSel = -1
@@ -1101,8 +1098,7 @@ proc clips() =
   if igButton("Duplicate"):
     focus(song.clip, -1) # deselects, so the copy has no selection
     song.clips.add song.clips[song.clip]
-    clipNames.add clipNames[song.clip]
-    for t in song.clips[^1].mitems:
+    for t in song.clips[^1].tracks.mitems:
       t.mute = false
       t.solo = false
     focus(song.clips.high, -1)
@@ -1111,9 +1107,9 @@ proc clips() =
   igSameLine()
   igSetNextItemWidth(-1)
   var buf: array[64, char]
-  copyMem(addr buf[0], cstring(clipNames[song.clip]), min(clipNames[song.clip].len, 63))
+  copyMem(addr buf[0], cstring(song.clips[song.clip].name), min(song.clips[song.clip].name.len, 63))
   if igInputText("##name", cast[cstring](addr buf[0]), buf.len.uint):
-    clipNames[song.clip] = $cast[cstring](addr buf[0])
+    song.clips[song.clip].name = $cast[cstring](addr buf[0])
   igSeparator()
   if igBeginTable("tracks", 4, ImGuiTableFlags.SizingStretchProp):
     igTableSetupColumn("", ImGuiTableColumnFlags.WidthFixed) # "X"
@@ -1122,17 +1118,17 @@ proc clips() =
     igTableSetupColumn("", ImGuiTableColumnFlags.WidthStretch, 1)
     let dl = igGetWindowDrawList()
     let span = song.clips[song.clip].loopEnd.float32
-    for i in 0 ..< song.clips[song.clip].len:
+    for i in 0 ..< song.clips[song.clip].tracks.len:
       igTableNextRow()
       igPushID(int32(i))
       template t(): untyped =
-        song.clips[song.clip][i]
+        song.clips[song.clip].tracks[i]
 
       discard igTableNextColumn()
       if igButton("X"):
         let f = focusTrack - ord(focusTrack > i) # tracks after the gone one shift down
         focus(song.clip, if focusTrack == i: -1 else: f)
-        song.clips[song.clip].delete i
+        song.clips[song.clip].tracks.delete i
         igPopID()
         break
       discard igTableNextColumn()
@@ -1202,7 +1198,7 @@ proc clips() =
       igPopID()
     igEndTable()
   if igButton("ADD"):
-    song.clips[song.clip].add Track()
+    song.clips[song.clip].tracks.add Track()
 
 proc fits(i: int, p: Placement): bool =
   ## `p` could replace placement `i` (-1: be added): in bounds and clear of its lane's others.
@@ -1477,7 +1473,7 @@ proc songPlaylist() =
     let loop = song.clips[p.clip].loopEnd
     dl.pushClipRect(v2(x0, y), v2(x1, y + laneH), true)
     var (lo, hi) = (127, 0) # pitch range of the clip, spread over the box height
-    for t in song.clips[p.clip]:
+    for t in song.clips[p.clip].tracks:
       for n in t.notes:
         lo = min(lo, n.pitch)
         hi = max(hi, n.pitch)
@@ -1487,7 +1483,7 @@ proc songPlaylist() =
     let nh = max(1f32, body / float32(hi - lo + 1)) # ponytail: no cap, a one-pitch clip fills the body
     var base = p.start - p.offset # where the clip starts, repeating every `loop`
     while body >= 2 and base < p.start + p.len:
-      for t in song.clips[p.clip]:
+      for t in song.clips[p.clip].tracks:
         for n in t.notes:
           let ny = top + (body - nh) * float32(hi - n.pitch) / max(1, hi - lo).float32
           dl.addRectFilled(
@@ -1528,22 +1524,21 @@ proc songPlaylist() =
     igPopClipRect()
 
 type Snap = object ## what undo restores; selection and mute/solo cleared, so they don't count as edits
-  clips: seq[seq[Track]]
+  clips: seq[Clip]
   placements: seq[Placement]
-  names: seq[string]
 
 var
   undoStack, redoStack: seq[Snap]
   last: Snap # the state at the last commit
 
 proc `==`(a, b: Snap): bool =
-  a.clips == b.clips and a.placements == b.placements and a.names == b.names
+  a.clips == b.clips and a.placements == b.placements
 
 proc capture(): Snap =
   # ponytail: copies the whole song every idle frame; diff or dirty flag if big songs lag
-  result = Snap(clips: song.clips, placements: song.placements, names: clipNames)
+  result = Snap(clips: song.clips, placements: song.placements)
   for c in result.clips.mitems:
-    for t in c.mitems:
+    for t in c.tracks.mitems:
       t.mute = false
       t.solo = false
       for n in t.notes.mitems:
@@ -1557,15 +1552,14 @@ proc capture(): Snap =
     p.sel = false
 
 proc restore(s: Snap) =
-  let old = song.clips[song.clip]
+  let old = song.clips[song.clip].tracks
   song.clips = s.clips
   song.placements = s.placements
-  clipNames = s.names
   song.clip = min(song.clip, song.clips.high)
-  for i in 0 ..< min(old.len, song.clips[song.clip].len): # mute/solo aren't undone
-    song.clips[song.clip][i].mute = old[i].mute
-    song.clips[song.clip][i].solo = old[i].solo
-  if focusTrack >= song.clips[song.clip].len:
+  for i in 0 ..< min(old.len, song.clips[song.clip].tracks.len): # mute/solo aren't undone
+    song.clips[song.clip].tracks[i].mute = old[i].mute
+    song.clips[song.clip].tracks[i].solo = old[i].solo
+  if focusTrack >= song.clips[song.clip].tracks.len:
     focusTrack = -1
   pSel = -1
 
@@ -1608,7 +1602,7 @@ var
 proc dirty(): bool =
   capture() != saved or song.bpm != savedBpm
 
-proc apply(s: Smm) =
+proc apply(s: Song) =
   ## `s` becomes the song, with a fresh undo history.
   song.clips = s.clips
   song.placements = s.placements
@@ -1617,7 +1611,6 @@ proc apply(s: Smm) =
   song.playing = false
   song.pos = 0
   song.idlePos = 0
-  clipNames = s.names
   placeClip.setLen 0
   pSel = -1
   focusTrack = -1 # the old index may not exist in `s`; focus() reads cur()
@@ -1641,7 +1634,7 @@ proc load(path: string) =
 
 proc write(path: string): bool =
   try:
-    writeFile(path, toSmm((song.bpm, song.clips, clipNames, song.placements)))
+    writeFile(path, toSmm(song))
     smmPath = path
     saved = capture()
     savedBpm = song.bpm
@@ -1654,7 +1647,7 @@ proc proceed() =
   after = Nothing
   case a
   of NewSong:
-    apply (120.0, newSeq[seq[Track]](1), @[""], newSeq[Placement]())
+    apply Song(bpm: 120, clips: @[Clip()])
     smmPath = ""
   of OpenSong:
     fbOpen(0)
