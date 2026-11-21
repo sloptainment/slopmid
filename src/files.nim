@@ -62,6 +62,10 @@ proc load(path: string) =
   except CatchableError as e:
     showError e
 
+proc openFile*(path: string) =
+  ## Command-line open: like File > Open, but nothing to ask about yet.
+  load path
+
 proc save(path: string): bool =
   try:
     writeFile(path, toSmm(song))

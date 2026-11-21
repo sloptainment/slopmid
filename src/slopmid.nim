@@ -1,4 +1,4 @@
-import std/[locks, strformat]
+import std/[locks, os, strformat]
 import imgui
 import wrap/gui
 import model, common, audio, history, files, pianoroll, clipswin, songwin
@@ -139,7 +139,17 @@ proc ui() =
   history()
   menuCmd = None
 
+const Usage = """usage: slopmid [file.smm]
+
+  -h, --help   show this help and exit"""
+
 proc main() =
+  let args = commandLineParams()
+  if args.len > 0 and args[0] in ["-h", "--help"]:
+    echo Usage
+    quit 0
+  if args.len > 0:
+    openFile args[0]
   audio.start()
   gui.open("slopmid", 1280, 800)
   var lastTitle = "slopmid"
