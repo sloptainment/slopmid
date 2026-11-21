@@ -487,9 +487,9 @@ proc clips() =
     song.clip = min(gone, song.clips.high)
   igSeparator()
   if igBeginTable("tracks", 4, ImGuiTableFlags.SizingStretchProp):
-    igTableSetupColumn("", ImGuiTableColumnFlags.WidthFixed)
-    igTableSetupColumn("", ImGuiTableColumnFlags.WidthFixed)
-    igTableSetupColumn("", ImGuiTableColumnFlags.WidthStretch, 1)
+    igTableSetupColumn("", ImGuiTableColumnFlags.WidthFixed) # "X"
+    igTableSetupColumn("", ImGuiTableColumnFlags.WidthFixed) # "M/S"
+    igTableSetupColumn("", ImGuiTableColumnFlags.WidthFixed) # name
     igTableSetupColumn("", ImGuiTableColumnFlags.WidthStretch, 1)
     let dl = igGetWindowDrawList()
     let span = song.clips[song.clip].loopEnd.float32
