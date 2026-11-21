@@ -5,10 +5,10 @@
 ## Bend tool (corner buttons): every note shows its pitch bend as a line between points, the first at its start and the last at its end (pinned in time). Drag a point (up/down is semitones from the note, continuous), click the line or a note to add one at the snap, right-drag a middle point to delete it, Ctrl+click puts a point on the note's own pitch. Selection as in Select, built in: click, Shift+click, drag a box, Delete, Ctrl+A. Notes themselves are untouched.
 ## Wheel scrolls pitch, Shift+wheel scrolls time, middle-drag pans, Ctrl+middle-drag zooms. Space plays/pauses.
 
-import std/[algorithm, locks, math, os, sequtils, strformat, strutils]
+import std/[locks, math, os, sequtils, strformat, strutils]
 import imgui
 import wrap/[alsa, filebrowser, gui, slopgs]
-import model, player, gm, smf, smm
+import model, edit, player, gm, smf, smm
 
 const
   KeyW = 56f32 # note-name column
@@ -89,13 +89,6 @@ type Tool = enum
   Draw
   Select
   Bend ## the piano roll only
-
-type PDrag = enum ## dragging a placement in the song window
-  PIdle
-  PMove
-  PTrimL
-  PTrimR
-  PBox ## a selection box
 
 type ScrollGrab = enum
   GrabBody
@@ -414,37 +407,15 @@ proc pianoRoll() =
         for k in 0 .. n.bend.high:
           n.bend[k].sel = all and n.bendVisible(k)
   if notesOk and fired("Piano roll", Duplicate, ImGuiKey.D):
-    let sel = cur().notes.filterIt(it.sel)
-    if sel.len > 0:
-      let first = sel.mapIt(it.start).min
-      var at = sel.mapIt(it.start + it.len).max # right after the last note ends
-      let bar = (at + BarTicks - 1) div BarTicks * BarTicks
-      if grid < Ppq div 4 and bar - at <= grid: # fine snap: don't leave a sliver before the bar
-        at = bar
-      for n in cur().notes.mitems:
-        n.sel = false
-      for n in sel:
-        var m = n
-        m.start += at - first
-        cur().notes.add m
+    cur().notes.duplicate(grid)
   if notesOk and velMode == 0 and fired("Piano roll", Copy, ImGuiKey.C):
     let sel = cur().notes.filterIt(it.sel)
     if sel.len > 0:
       noteClip = sel
   if notesOk and velMode == 0 and fired("Piano roll", Paste, ImGuiKey.V) and focusTrack >= 0 and noteClip.len > 0:
-    let d = snap(song.clipPos.int, grid) - noteClip.mapIt(it.start).min # the group's first note lands on the playhead
-    for n in cur().notes.mitems:
-      n.sel = false
-    for n in noteClip:
-      var m = n
-      m.start += d
-      cur().notes.add m
+    cur().notes.pasteNotes(noteClip, snap(song.clipPos.int, grid)) # the group's first note lands on the playhead
   if notesOk and fired("Piano roll", Quantize, ImGuiKey.Q):
-    for n in cur().notes.mitems:
-      if n.sel:
-        let s = snap(n.start, grid)
-        n.len = max(grid, snap(n.start + n.len, grid) - s) # at least one snap long
-        n.start = s
+    cur().notes.quantize(grid)
   var semis = 0 # semitones to transpose by
   if notesOk and editor == "Piano roll" and menuCmd in SemiUp .. OctDown:
     semis = [1, -1, 12, -12][menuCmd.ord - SemiUp.ord]
@@ -453,14 +424,7 @@ proc pianoRoll() =
     if up or igIsKeyPressed(ImGuiKey.DownArrow, true):
       semis = (if io.keyCtrl: 12 else: 1) * (if up: 1 else: -1)
   if semis != 0:
-    let anySel = cur().notes.anyIt(it.sel)
-    var d = semis
-    for n in cur().notes: # the whole group stops at the edge, keeping its shape
-      if n.sel or not anySel:
-        d = clamp(d, -n.pitch, 127 - n.pitch)
-    for n in cur().notes.mitems:
-      if n.sel or not anySel:
-        n.pitch += d
+    cur().notes.transpose(semis)
 
   # click or drag on the ruler moves the playhead
   igSetCursorScreenPos(v2(gridX, origin.y))
@@ -571,16 +535,8 @@ proc pianoRoll() =
           return i
     hit
   proc addBend(i: int, v: float) = # a point at the snapped tick, or that tick's own point, set to `v`
-    template n(): untyped = cur().notes[i]
-    if n.len >= 2:
-      let t = clamp(snap(xTick(mouse.x), grid) - n.start, 1, n.len - 1)
-      var k = 1
-      while k < n.bend.high and n.bend[k].t < t:
-        inc k
-      if k < n.bend.high and n.bend[k].t == t:
-        n.bend[k].v = v
-      else:
-        n.bend.insert((t, v, false), k)
+    let k = cur().notes[i].addBendPt(snap(xTick(mouse.x), grid), v)
+    if k >= 0:
       bendNote = i
       bendPt = k
   if not notesOk:
@@ -592,13 +548,7 @@ proc pianoRoll() =
         bendNote = hi
         bendPt = hk
         if io.keyCtrl: # on the note's own pitch; a selected point takes its whole selection along
-          let group = cur().notes[hi].bend[hk].sel
-          cur().notes[hi].bend[hk].v = 0
-          if group:
-            for n in cur().notes.mitems:
-              for k in n.bendIdx:
-                if n.bend[k].sel:
-                  n.bend[k].v = 0
+          cur().notes.zeroBendPts(hi, hk)
           bendNote = -1
         elif not cur().notes[hi].bend[hk].sel: # a selected point keeps the group
           if not io.keyShift:
@@ -629,29 +579,9 @@ proc pianoRoll() =
     if bendNote >= 0:
       # the dragged point, or its whole selection, moves by the same ticks and semitones
       let bn = cur().notes[bendNote]
-      let inGroup = proc(i, k: int): bool =
-        let n = cur().notes[i]
-        (i == bendNote and k == bendPt) or (n.bendVisible(k) and n.bend[k].sel)
-      var dt = 0 # the end points only move up and down
-      if bendPt > 0 and bendPt < bn.bend.high:
-        dt = snap(xTick(mouse.x), grid) - bn.start - bn.bend[bendPt].t
-      var dv = bendVal(bn) - bn.bend[bendPt].v
-      for i, n in cur().notes:
-        for k in n.bendIdx:
-          if inGroup(i, k):
-            dv = clamp(dv, -BendRange.float - n.bend[k].v, BendRange.float - n.bend[k].v)
-            if k > 0 and k < n.bend.high: # the group stops at its neighbours and the note's ends
-              let t = n.bend[k].t
-              if k > 1 and not inGroup(i, k - 1): dt = max(dt, n.bend[k - 1].t + 1 - t)
-              if k == n.bend.high - 1: dt = min(dt, n.len - 1 - t)
-              elif not inGroup(i, k + 1): dt = min(dt, min(n.bend[k + 1].t, n.len) - 1 - t)
-              if k == 1: dt = max(dt, 1 - t)
-      for i, n in cur().notes.mpairs:
-        for k in n.bendIdx:
-          if inGroup(i, k):
-            n.bend[k].v += dv
-            if k > 0 and k < n.bend.high:
-              n.bend[k].t += dt
+      cur().notes.moveBendPts(
+        bendNote, bendPt, snap(xTick(mouse.x), grid) - bn.start - bn.bend[bendPt].t, bendVal(bn) - bn.bend[bendPt].v
+      )
     elif sheetHovered and igIsMouseDown(ImGuiMouseButton.Right): # dragging deletes; not the ends
       let (hi, hk) = bendHit()
       if hi >= 0 and hk > 0 and hk < cur().notes[hi].bend.high:
@@ -697,38 +627,20 @@ proc pianoRoll() =
   of Move:
     # the dragged note, or its whole selection, moves by the same ticks and pitches
     let n = cur().notes[dragNote]
-    var ds = snap(t - grabTicks, grid) - n.start
-    var dp = p - n.pitch
-    for i, m in cur().notes:
-      if (if n.sel: m.sel else: i == dragNote):
-        ds = max(ds, -m.start)
-        dp = clamp(dp, -m.pitch, 127 - m.pitch)
-    for i, m in cur().notes.mpairs:
-      if (if n.sel: m.sel else: i == dragNote):
-        m.start += ds
-        m.pitch += dp
+    cur().notes.moveNotes(dragNote, snap(t - grabTicks, grid) - n.start, p - n.pitch)
   of Box:
     discard
   of Resize:
     # the dragged note, or its whole selection, changes length by the same ticks
     let n = cur().notes[dragNote]
-    var d = snap(t, grid) - n.start - n.len
-    for i, m in cur().notes:
-      if (if n.sel: m.sel else: i == dragNote):
-        d = max(d, grid - m.len)
-    for i, m in cur().notes.mpairs:
-      if (if n.sel: m.sel else: i == dragNote):
-        m.len += d
+    cur().notes.resizeNotes(dragNote, snap(t, grid) - n.start - n.len, grid)
     lastLen = cur().notes[dragNote].len
   of Idle:
     if velMode == 0 and fired("Piano roll", Delete, ImGuiKey.Delete, ctrl = false):
       if notesOk:
         cur().notes.keepItIf(not it.sel)
       else: # the selected middle points
-        for n in cur().notes.mitems:
-          for k in countdown(n.bend.high - 1, 1):
-            if n.bendVisible(k) and n.bend[k].sel:
-              n.bend.delete k
+        cur().notes.deleteBendPts
     elif tool == Draw and sheetHovered and igIsMouseDown(ImGuiMouseButton.Right) and hit >= 0:
       cur().notes.delete hit
 
@@ -764,16 +676,7 @@ proc pianoRoll() =
   let volVal = proc(): int = clamp(int((bottom - mouse.y) / valH * 127), 0, 127)
   let loopT = song.clips[song.clip].loopEnd
   let addPt = proc(v: int) = # a point at the snapped tick, or that tick's own point, set to `v`
-    let t = min(snap(xTick(mouse.x), grid), loopT)
-    volDrag = pts.len
-    for i, p in pts:
-      if p.t >= t:
-        volDrag = i
-        break
-    if volDrag < pts.len and pts[volDrag].t == t:
-      pts[volDrag].v = v
-    else:
-      pts.insert((t, v, false), volDrag)
+    volDrag = pts.addCurvePt(snap(xTick(mouse.x), grid), v, loopT)
   let onCurve = proc(): bool = # the drawn curve under the mouse
     let t = xTick(mouse.x)
     t >= pts[0].t and t <= loopT and
@@ -788,13 +691,7 @@ proc pianoRoll() =
     if fired("Piano roll", Copy, ImGuiKey.C) and pts.anyIt(it.sel):
       ccClip = pts.filterIt(it.sel)
     if fired("Piano roll", Paste, ImGuiKey.V) and ccClip.len > 0:
-      let d = snap(song.clipPos.int, grid) - ccClip[0].t # the first point lands on the playhead
-      let moved = ccClip.mapIt((t: it.t + d, v: it.v, sel: true)).filterIt(it.t <= loopT)
-      if moved.len > 0: # replaces the points the pasted span covers
-        pts.keepItIf(it.t < moved[0].t or it.t > moved[^1].t)
-        for p in pts.mitems:
-          p.sel = false
-        pts = (pts & moved).sortedByIt(it.t)
+      pts.pasteCurve(ccClip, snap(song.clipPos.int, grid), loopT) # the first point lands on the playhead
   if velMode > 0:
     if pts.len == 0: # the default, as a point at the start
       pts.add (0, CcDefault[velMode - 1], false)
@@ -827,19 +724,9 @@ proc pianoRoll() =
           pts[i].sel = false
     if velHeld and volDrag in 0 ..< pts.len:
       # the dragged point, or in Select its whole selection, moves by the same ticks and values
-      let inGroup = proc(i: int): bool = i == volDrag or (tool == Select and pts[i].sel)
-      var dt = clamp(snap(xTick(mouse.x), grid), 0, loopT) - pts[volDrag].t
-      var dv = volVal() - pts[volDrag].v
-      for i, p in pts: # the group stops at its neighbours and the edges, keeping its shape
-        if inGroup(i):
-          if i > 0 and not inGroup(i - 1): dt = max(dt, pts[i - 1].t + 1 - p.t)
-          if i < pts.high and not inGroup(i + 1): dt = min(dt, pts[i + 1].t - 1 - p.t)
-          dt = clamp(dt, -p.t, max(0, loopT - p.t))
-          dv = clamp(dv, -p.v, 127 - p.v)
-      for i in 0 .. pts.high:
-        if inGroup(i):
-          pts[i].t += dt
-          pts[i].v += dv
+      pts.moveCurvePts(
+        volDrag, tool == Select, clamp(snap(xTick(mouse.x), grid), 0, loopT) - pts[volDrag].t, volVal() - pts[volDrag].v, loopT
+      )
     if velHovered and igIsMouseDown(ImGuiMouseButton.Right): # dragging deletes; the last point stays
       let h = volHit()
       if h >= 0 and pts.len > 1:
@@ -1073,21 +960,13 @@ proc clips() =
   if igButton("Remove") and song.clips.len > 1:
     let gone = song.clip
     focus(gone, -1)
-    song.clips.delete gone
-    song.placements.keepItIf(it.clip != gone)
+    song.removeClip(gone)
     placeClip.setLen 0 # its clip numbers are stale
     pSel = -1
-    for p in song.placements.mitems:
-      if p.clip > gone:
-        dec p.clip
-    song.clip = min(gone, song.clips.high)
   igSameLine()
   if igButton("Duplicate"):
     focus(song.clip, -1) # deselects, so the copy has no selection
-    song.clips.add song.clips[song.clip]
-    for t in song.clips[^1].tracks.mitems:
-      t.mute = false
-      t.solo = false
+    song.duplicateClip(song.clip)
     focus(song.clips.high, -1)
   igSameLine()
   igText("Clip name: ")
@@ -1187,13 +1066,6 @@ proc clips() =
   if igButton("ADD"):
     song.clips[song.clip].tracks.add Track()
 
-proc fits(i: int, p: Placement): bool =
-  ## `p` could replace placement `i` (-1: be added): in bounds and clear of its lane's others.
-  result = p.len > 0 and p.start >= 0 and p.lane in 0 ..< Lanes
-  for j, q in song.placements:
-    if j != i and q.lane == p.lane and q.start < p.start + p.len and p.start < q.start + q.len:
-      result = false
-
 proc songPlaylist() =
   ## Lanes of placed clips. Draw tool: click empty space to place the clip chosen in Clips (drag before releasing to position it),
   ## right-click removes. Select tool: drag a box to select; Delete removes the selection, Ctrl+A selects all, or deselects if anything is selected.
@@ -1277,21 +1149,9 @@ proc songPlaylist() =
     if sel.len > 0:
       placeClip = sel
   if fired("Song", Paste, ImGuiKey.V) and placeClip.len > 0:
-    let d = snap(song.songPos.int, grid) - placeClip.mapIt(it.start).min # the group's first clip lands on the playhead
-    let moved = placeClip.mapIt(Placement(clip: it.clip, lane: it.lane, start: it.start + d, len: it.len, offset: it.offset, sel: true))
-    if moved.allIt(fits(-1, it)): # all or nothing: an overlap anywhere cancels the paste
-      for p in song.placements.mitems:
-        p.sel = false
-      song.placements.add moved
+    song.pastePlacements(placeClip, snap(song.songPos.int, grid)) # the group's first clip lands on the playhead
   if fired("Song", Quantize, ImGuiKey.Q):
-    for i in 0 ..< song.placements.len:
-      var p = song.placements[i]
-      if p.sel:
-        let s = snap(p.start, grid)
-        p.len = max(grid, snap(p.start + p.len, grid) - s) # at least one snap long; skipped if it would overlap
-        p.start = s
-        if fits(i, p):
-          song.placements[i] = p
+    song.quantizePlacements(grid)
 
   let t = xTick(mouse.x)
   let lane = yLane(mouse.y)
@@ -1310,20 +1170,11 @@ proc songPlaylist() =
 
   if hovered and igIsMouseClicked(ImGuiMouseButton.Left):
     if hit < 0 and songTool == Draw:
-      for q in song.placements.mitems:
-        q.sel = false
-      var p = Placement(
-        clip: song.clip, lane: lane, start: snapDown(t, grid),
-        len: song.clips[song.clip].loopEnd,
-      )
-      for q in song.placements: # no longer than the gap before the next one
-        if q.lane == lane and q.start >= p.start:
-          p.len = min(p.len, q.start - p.start)
-      if fits(-1, p):
-        song.placements.add p
-        pIdx = song.placements.high # keep dragging it, as a new note in the roll
+      let added = song.addPlacement(lane, t, grid)
+      if added >= 0:
+        pIdx = added # keep dragging it, as a new note in the roll
         pSel = pIdx
-        pGrab = t - p.start
+        pGrab = t - song.placements[added].start
         pdrag = PMove
     elif hit >= 0:
       if song.placements[hit].clip != song.clip:
@@ -1346,9 +1197,7 @@ proc songPlaylist() =
   let (bx0, bx1) = (min(pBoxA.x + gridX - songScrollX, mouse.x), max(pBoxA.x + gridX - songScrollX, mouse.x))
   let (by0, by1) = (min(pBoxA.y + laneTop - songScrollY, mouse.y), max(pBoxA.y + laneTop - songScrollY, mouse.y))
   proc moving(i: int): bool =
-    ## Dragged with the mouse: the grabbed placement, or its whole selection. A left trim is the grabbed one only.
-    pdrag in {PMove, PTrimL, PTrimR} and
-      (if pdrag != PTrimL and song.placements[pIdx].sel: song.placements[i].sel else: i == pIdx)
+    song.placements.moves(pIdx, pdrag, i)
 
   if not igIsMouseDown(ImGuiMouseButton.Left):
     if pdrag == PBox:
@@ -1367,43 +1216,7 @@ proc songPlaylist() =
   case pdrag
   of PMove, PTrimL, PTrimR:
     # from where the drag began, so nothing sticks to an overlap passed on the way
-    let a = pOrig[pIdx]
-    var ds, dn = 0 # ticks and lanes moved by
-    case pdrag
-    of PMove: # the group stops at the edges, keeping its shape
-      ds = snap(t - pGrab, grid) - a.start
-      dn = lane - a.lane
-      for i, q in pOrig:
-        if moving(i):
-          ds = max(ds, -q.start)
-          dn = clamp(dn, -q.lane, Lanes - 1 - q.lane)
-    of PTrimR: # all change length by the same ticks
-      ds = snap(t, grid) - a.start - a.len
-      for i, q in pOrig:
-        if moving(i):
-          ds = max(ds, grid - q.len)
-    of PTrimL: # the clip stays put under the cursor: its start moves with the edge
-      ds = max(-a.start, min(snap(t, grid) - a.start, a.len - grid))
-    else:
-      discard
-    for i, q in pOrig:
-      if moving(i):
-        var p = q
-        case pdrag
-        of PMove:
-          p.start += ds
-          p.lane += dn
-        of PTrimR:
-          p.len += ds
-        else:
-          p.start += ds
-          p.len -= ds
-          p.offset = floorMod(p.offset + ds, song.clips[p.clip].loopEnd)
-        song.placements[i] = p
-    pBlocked = false
-    for i, p in song.placements:
-      if not fits(i, p):
-        pBlocked = true
+    pBlocked = song.dragPlacements(pOrig, pIdx, pdrag, t, lane, pGrab, grid)
   of PBox:
     discard
   of PIdle:
