@@ -1,6 +1,6 @@
 ## Sheet: left-click adds a note or drags it, its right end resizes it,
 ## right-click deletes. Note names: click to audition. Velocity lane: drag.
-## Select tool (corner buttons): drag a box to select, drag a selected note to move them all, Delete removes them; Ctrl+A selects all.
+## Select tool (corner buttons): drag a box to select, drag a selected note to move them all, Delete removes them; Ctrl+A selects all, Ctrl+Q quantizes the selection's starts and ends to the snap.
 ## Wheel scrolls pitch, Shift+wheel scrolls time, middle-drag pans, Ctrl+middle-drag zooms. Space plays/pauses.
 
 import std/[locks, math, os, sequtils, strformat]
@@ -368,6 +368,12 @@ proc pianoRoll() =
   if igIsWindowFocused() and io.keyCtrl and igIsKeyPressed(ImGuiKey.D, false) and not io.wantTextInput:
     for n in cur().notes.mitems:
       n.sel = false
+  if igIsWindowFocused() and io.keyCtrl and igIsKeyPressed(ImGuiKey.Q, false) and not io.wantTextInput:
+    for n in cur().notes.mitems:
+      if n.sel:
+        let s = snap(n.start, grid)
+        n.len = max(grid, snap(n.start + n.len, grid) - s) # at least one snap long
+        n.start = s
   if igIsWindowFocused() and (io.keyCtrl or io.keyShift) and not io.wantTextInput:
     let up = igIsKeyPressed(ImGuiKey.UpArrow, true)
     if up or igIsKeyPressed(ImGuiKey.DownArrow, true):
@@ -877,6 +883,15 @@ proc songPlaylist() =
   if igIsWindowFocused() and io.keyCtrl and igIsKeyPressed(ImGuiKey.D, false) and not io.wantTextInput:
     for p in song.placements.mitems:
       p.sel = false
+  if igIsWindowFocused() and io.keyCtrl and igIsKeyPressed(ImGuiKey.Q, false) and not io.wantTextInput:
+    for i in 0 ..< song.placements.len:
+      var p = song.placements[i]
+      if p.sel:
+        let s = snap(p.start, grid)
+        p.len = max(grid, snap(p.start + p.len, grid) - s) # at least one snap long; skipped if it would overlap
+        p.start = s
+        if fits(i, p):
+          song.placements[i] = p
 
   let t = xTick(mouse.x)
   let lane = yLane(mouse.y)
