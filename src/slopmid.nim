@@ -141,6 +141,19 @@ var
   noteClip: seq[Note] # Ctrl+C in the piano roll
   placeClip: seq[Placement] # Ctrl+C in the song window
 
+type Cmd = enum
+  None, SelectAll, Duplicate, Copy, Paste, Quantize, Delete, SemiUp, SemiDown, OctUp, OctDown
+
+var
+  menuCmd: Cmd # picked in the Edit menu this frame
+  editor: string # the piano roll or song window, whichever had focus last: where the Edit menu acts
+
+proc fired(win: string, c: Cmd, key: ImGuiKey, ctrl = true): bool =
+  ## `c` was picked in the Edit menu with `win` the last editor focused, or its shortcut was pressed in `win`.
+  let io = igGetIO()
+  (menuCmd == c and editor == win) or
+    (igIsWindowFocused() and (io.keyCtrl or not ctrl) and igIsKeyPressed(key, false) and not io.wantTextInput)
+
 proc clipPos(): var float =
   ## The piano roll's playhead, whichever mode is playing.
   if song.songMode:
@@ -351,6 +364,8 @@ proc toolButtons(tool: var Tool, origin: ImVec2, bend = false) =
 
 proc pianoRoll() =
   let io = igGetIO()
+  if igIsWindowFocused():
+    editor = "Piano roll"
   let dl = igGetWindowDrawList()
   let origin = igGetCursorScreenPosNonUDT()
   let avail = igGetContentRegionAvailNonUDT()
@@ -401,7 +416,7 @@ proc pianoRoll() =
       if n.bend.len < 2: # the two end points, flat
         n.bend = @[(0, 0.0, false), (0, 0.0, false)]
 
-  if velMode == 0 and igIsWindowFocused() and io.keyCtrl and igIsKeyPressed(ImGuiKey.A, false) and not io.wantTextInput:
+  if velMode == 0 and fired("Piano roll", SelectAll, ImGuiKey.A):
     if notesOk:
       let all = not cur().notes.anyIt(it.sel) # anything selected: deselect instead
       for n in cur().notes.mitems:
@@ -411,7 +426,7 @@ proc pianoRoll() =
       for n in cur().notes.mitems:
         for k in 0 .. n.bend.high:
           n.bend[k].sel = all and n.bendVisible(k)
-  if notesOk and igIsWindowFocused() and io.keyCtrl and igIsKeyPressed(ImGuiKey.D, false) and not io.wantTextInput:
+  if notesOk and fired("Piano roll", Duplicate, ImGuiKey.D):
     let sel = cur().notes.filterIt(it.sel)
     if sel.len > 0:
       let first = sel.mapIt(it.start).min
@@ -425,12 +440,11 @@ proc pianoRoll() =
         var m = n
         m.start += at - first
         cur().notes.add m
-  if notesOk and igIsWindowFocused() and io.keyCtrl and igIsKeyPressed(ImGuiKey.C, false) and not io.wantTextInput:
+  if notesOk and fired("Piano roll", Copy, ImGuiKey.C):
     let sel = cur().notes.filterIt(it.sel)
     if sel.len > 0:
       noteClip = sel
-  if notesOk and igIsWindowFocused() and io.keyCtrl and igIsKeyPressed(ImGuiKey.V, false) and not io.wantTextInput and
-      focusTrack >= 0 and noteClip.len > 0:
+  if notesOk and fired("Piano roll", Paste, ImGuiKey.V) and focusTrack >= 0 and noteClip.len > 0:
     let d = snap(clipPos().int, grid) - noteClip.mapIt(it.start).min # the group's first note lands on the playhead
     for n in cur().notes.mitems:
       n.sel = false
@@ -438,23 +452,28 @@ proc pianoRoll() =
       var m = n
       m.start += d
       cur().notes.add m
-  if notesOk and igIsWindowFocused() and io.keyCtrl and igIsKeyPressed(ImGuiKey.Q, false) and not io.wantTextInput:
+  if notesOk and fired("Piano roll", Quantize, ImGuiKey.Q):
     for n in cur().notes.mitems:
       if n.sel:
         let s = snap(n.start, grid)
         n.len = max(grid, snap(n.start + n.len, grid) - s) # at least one snap long
         n.start = s
-  if notesOk and igIsWindowFocused() and (io.keyCtrl or io.keyShift) and not io.wantTextInput:
+  var semis = 0 # semitones to transpose by
+  if notesOk and editor == "Piano roll" and menuCmd in SemiUp .. OctDown:
+    semis = [1, -1, 12, -12][menuCmd.ord - SemiUp.ord]
+  elif notesOk and igIsWindowFocused() and (io.keyCtrl or io.keyShift) and not io.wantTextInput:
     let up = igIsKeyPressed(ImGuiKey.UpArrow, true)
     if up or igIsKeyPressed(ImGuiKey.DownArrow, true):
-      let anySel = cur().notes.anyIt(it.sel)
-      var d = (if io.keyCtrl: 12 else: 1) * (if up: 1 else: -1)
-      for n in cur().notes: # the whole group stops at the edge, keeping its shape
-        if n.sel or not anySel:
-          d = clamp(d, -n.pitch, 127 - n.pitch)
-      for n in cur().notes.mitems:
-        if n.sel or not anySel:
-          n.pitch += d
+      semis = (if io.keyCtrl: 12 else: 1) * (if up: 1 else: -1)
+  if semis != 0:
+    let anySel = cur().notes.anyIt(it.sel)
+    var d = semis
+    for n in cur().notes: # the whole group stops at the edge, keeping its shape
+      if n.sel or not anySel:
+        d = clamp(d, -n.pitch, 127 - n.pitch)
+    for n in cur().notes.mitems:
+      if n.sel or not anySel:
+        n.pitch += d
 
   # click or drag on the ruler moves the playhead
   igSetCursorScreenPos(v2(gridX, origin.y))
@@ -715,7 +734,7 @@ proc pianoRoll() =
         m.len += d
     lastLen = cur().notes[dragNote].len
   of Idle:
-    if velMode == 0 and igIsWindowFocused() and igIsKeyPressed(ImGuiKey.Delete, false) and not io.wantTextInput:
+    if velMode == 0 and fired("Piano roll", Delete, ImGuiKey.Delete, ctrl = false):
       if notesOk:
         cur().notes.keepItIf(not it.sel)
       else: # the selected middle points
@@ -772,12 +791,12 @@ proc pianoRoll() =
     let t = xTick(mouse.x)
     t >= pts[0].t and t <= loopT and
       abs(bottom - float32(cur().ccAt(velMode - 1, t)) / 127 * valH - mouse.y) <= 6
-  if velMode > 0 and igIsWindowFocused() and not io.wantTextInput:
-    if io.keyCtrl and igIsKeyPressed(ImGuiKey.A, false):
+  if velMode > 0:
+    if fired("Piano roll", SelectAll, ImGuiKey.A):
       let all = not pts.anyIt(it.sel) # anything selected: deselect instead
       for p in pts.mitems:
         p.sel = all
-    if igIsKeyPressed(ImGuiKey.Delete, false):
+    if fired("Piano roll", Delete, ImGuiKey.Delete, ctrl = false):
       pts.keepItIf(not it.sel)
   if velMode > 0:
     if pts.len == 0: # the default, as a point at the start
@@ -1185,6 +1204,8 @@ proc songPlaylist() =
   ## the right one past its end repeats it, and moves the whole selection's right edges). A drop that would overlap
   ## in a lane draws red and goes back. Panning and zooming as in the piano roll.
   let io = igGetIO()
+  if igIsWindowFocused():
+    editor = "Song"
   let dl = igGetWindowDrawList()
   let origin = igGetCursorScreenPosNonUDT()
   let avail = igGetContentRegionAvailNonUDT()
@@ -1250,23 +1271,22 @@ proc songPlaylist() =
   scrollbar("scrollY", true, v2(right, laneTop), paneH, songScrollY, laneH, Lanes.float32, 80)
 
   toolButtons(songTool, origin)
-  if igIsWindowFocused() and io.keyCtrl and igIsKeyPressed(ImGuiKey.A, false) and not io.wantTextInput:
+  if fired("Song", SelectAll, ImGuiKey.A):
     let all = not song.placements.anyIt(it.sel) # anything selected: deselect instead
     for p in song.placements.mitems:
       p.sel = all
-  if igIsWindowFocused() and io.keyCtrl and igIsKeyPressed(ImGuiKey.C, false) and not io.wantTextInput:
+  if fired("Song", Copy, ImGuiKey.C):
     let sel = song.placements.filterIt(it.sel)
     if sel.len > 0:
       placeClip = sel
-  if igIsWindowFocused() and io.keyCtrl and igIsKeyPressed(ImGuiKey.V, false) and not io.wantTextInput and
-      placeClip.len > 0:
+  if fired("Song", Paste, ImGuiKey.V) and placeClip.len > 0:
     let d = snap(songPos().int, grid) - placeClip.mapIt(it.start).min # the group's first clip lands on the playhead
     let moved = placeClip.mapIt(Placement(clip: it.clip, lane: it.lane, start: it.start + d, len: it.len, offset: it.offset, sel: true))
     if moved.allIt(fits(-1, it)): # all or nothing: an overlap anywhere cancels the paste
       for p in song.placements.mitems:
         p.sel = false
       song.placements.add moved
-  if igIsWindowFocused() and io.keyCtrl and igIsKeyPressed(ImGuiKey.Q, false) and not io.wantTextInput:
+  if fired("Song", Quantize, ImGuiKey.Q):
     for i in 0 ..< song.placements.len:
       var p = song.placements[i]
       if p.sel:
@@ -1390,7 +1410,7 @@ proc songPlaylist() =
   of PBox:
     discard
   of PIdle:
-    if igIsWindowFocused() and igIsKeyPressed(ImGuiKey.Delete, false) and not io.wantTextInput:
+    if fired("Song", Delete, ImGuiKey.Delete, ctrl = false):
       song.placements.keepItIf(not it.sel)
       pSel = -1
     elif songTool == Draw and hovered and igIsMouseClicked(ImGuiMouseButton.Right) and hit >= 0:
@@ -1495,6 +1515,22 @@ proc songPlaylist() =
 
 proc ui() =
   if igBeginMainMenuBar():
+    if igBeginMenu("Edit"): # acts on the piano roll or song window, whichever you used last
+      for (c, name, keys) in [
+        (SelectAll, "Select all / none", "Ctrl+A"),
+        (Duplicate, "Duplicate", "Ctrl+D"),
+        (Copy, "Copy", "Ctrl+C"),
+        (Paste, "Paste", "Ctrl+V"),
+        (Quantize, "Quantize", "Ctrl+Q"),
+        (Delete, "Delete", "Delete"),
+        (SemiUp, "Transpose up", "Shift+Up"),
+        (SemiDown, "Transpose down", "Shift+Down"),
+        (OctUp, "Octave up", "Ctrl+Up"),
+        (OctDown, "Octave down", "Ctrl+Down"),
+      ]:
+        if igMenuItem(name, keys):
+          menuCmd = c
+      igEndMenu()
     if igBeginMenu("Window"):
       if igCheckbox("Piano roll", addr togglePianoRoll):
         discard
@@ -1539,6 +1575,7 @@ proc ui() =
     if igBegin("Song", nil, ImGuiWindowFlags.NoScrollbar or ImGuiWindowFlags.NoScrollWithMouse):
       songPlaylist()
     igEnd()
+  menuCmd = None
 
 proc main() =
   let dlsPath =
