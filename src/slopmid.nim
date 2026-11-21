@@ -401,7 +401,9 @@ proc pianoRoll() =
   dl.addLine(v2(px, origin.y), v2(px, bottom), rgb(255, 255, 255, 180))
   dl.popClipRect()
 
-var togglePianoRoll = true
+var
+  togglePianoRoll = true
+  firstFrame = true
 
 proc ui() =
   if igBeginMainMenuBar():
@@ -420,6 +422,11 @@ proc ui() =
   ):
     transport()
   igEnd()
+  # after the bars, so the dockspace fills what they leave
+  let space = igDockSpaceOverViewport()
+  if firstFrame: # default layout: the piano roll fills the dockspace
+    igDockBuilderDockWindow("Piano roll", space)
+    firstFrame = false
   if togglePianoRoll:
     if igBegin("Piano roll"):
       pianoRoll()

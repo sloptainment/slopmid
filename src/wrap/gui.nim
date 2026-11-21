@@ -22,7 +22,7 @@ proc ImGui_ImplGlfw_InitForOpenGL(
 
 proc ImGui_ImplGlfw_NewFrame() {.importc, cdecl.}
 
-type Flags = ImGuiWindowFlags | ImGuiButtonFlags
+type Flags = ImGuiWindowFlags | ImGuiButtonFlags | ImGuiConfigFlags
 proc `or`*[T: Flags](a, b: T): T =
   cast[T](a.int32 or b.int32)
 
@@ -42,6 +42,7 @@ proc open*(title: string, w, h: int) =
   discard igCreateContext()
   # everything here is transient, the layout included
   igGetIO().iniFilename = nil
+  igGetIO().configFlags = igGetIO().configFlags or ImGuiConfigFlags.DockingEnable
   igStyleColorsDark()
   doAssert ImGui_ImplGlfw_InitForOpenGL(window, true)
   doAssert igOpenGL3Init("#version 330")
