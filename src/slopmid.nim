@@ -940,10 +940,30 @@ proc songPlaylist() =
       v2(x0, y + 1), v2(x1, y + laneH - 2),
       if i == pSel: rgb(255, 255, 255) else: rgb(10, 10, 10), 2,
     )
+    let loop = song.clips[p.clip].loopEnd
     dl.pushClipRect(v2(x0, y), v2(x1, y + laneH), true)
+    var (lo, hi) = (127, 0) # pitch range of the clip, spread over the box height
+    for t in song.clips[p.clip]:
+      for n in t.notes:
+        lo = min(lo, n.pitch)
+        hi = max(hi, n.pitch)
+    let hh = igGetTextLineHeight() + 2 # title header
+    dl.addRectFilled(v2(x0, y + 1), v2(x1, y + 1 + hh), rgb(0, 0, 0, 70), 2)
+    let (top, body) = (y + 1 + hh + 1, laneH - 3 - hh - 2) # the rest of the box
+    let nh = max(1f32, body / float32(hi - lo + 1)) # ponytail: no cap, a one-pitch clip fills the body
+    var base = p.start - p.offset # where the clip starts, repeating every `loop`
+    while body >= 2 and base < p.start + p.len:
+      for t in song.clips[p.clip]:
+        for n in t.notes:
+          let ny = top + (body - nh) * float32(hi - n.pitch) / max(1, hi - lo).float32
+          dl.addRectFilled(
+            v2(tickX(float(base + n.start)), ny),
+            v2(max(tickX(float(base + n.start + n.len)), tickX(float(base + n.start)) + 1), ny + nh),
+            rgb(255, 255, 255, 200),
+          )
+      base += loop
     dl.addText(v2(x0 + 4, y + 2), rgb(255, 255, 255), cstring(clipLabel(p.clip)))
     dl.popClipRect()
-    let loop = song.clips[p.clip].loopEnd
     var m = p.start + loop - p.offset # where the clip starts over
     while m < p.start + p.len:
       dl.addLine(v2(tickX(m.float), y + 1), v2(tickX(m.float), y + laneH - 2), rgb(255, 255, 255), 2)
