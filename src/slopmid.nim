@@ -965,6 +965,9 @@ proc pianoRoll() =
       2,
     )
     dl.addRect(v2(x0, y + 1), v2(x1, y + keyH - 1), if n.sel: rgb(255, 255, 255) else: rgb(10, 30, 10), 2)
+    let name = noteName(n.pitch) # faded, only where the whole name fits inside the note
+    if keyH >= igGetTextLineHeight() and x1 - x0 >= igCalcTextSizeNonUDT(cstring(name)).x + 6:
+      dl.addText(v2(x0 + 3, y + (keyH - igGetTextLineHeight()) / 2), rgb(0, 0, 0, 120), cstring(name))
   let notes = cur().notes
   for i, a in notes: # same-pitch notes sounding together: red on the shared ticks only
     for b in notes[i + 1 ..< notes.len]: # ponytail: O(n^2) pairs, sort by pitch if big clips lag
