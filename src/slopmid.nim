@@ -404,27 +404,26 @@ proc pianoRoll() =
 var togglePianoRoll = true
 
 proc ui() =
-  let vp = igGetMainViewport()
-  igSetNextWindowPos(v2(vp.workPos.x, vp.workPos.y))
-  igSetNextWindowSize(v2(vp.workSize.x, vp.workSize.y))
-  if igBegin(
-    "slopmid",
+  if igBeginMainMenuBar():
+    if igBeginMenu("Window"):
+      if igCheckbox("Piano roll", addr togglePianoRoll):
+        discard
+      igEndMenu()
+    igEndMainMenuBar()
+  # a bar under the menu: the work area shrinks, so no window can cover it
+  if igBeginViewportSideBar(
+    "transport",
     nil,
-    ImGuiWindowFlags.NoDecoration or ImGuiWindowFlags.NoMove or
-      ImGuiWindowFlags.NoSavedSettings or ImGuiWindowFlags.NoScrollWithMouse,
+    ImGuiDir.Up,
+    igGetFrameHeight() + 2 * igGetStyle().windowPadding.y,
+    ImGuiWindowFlags.NoScrollbar or ImGuiWindowFlags.NoSavedSettings,
   ):
-    if igBeginMainMenuBar():
-      if igBeginMenu("Window"):
-        if igCheckbox("Piano roll", addr togglePianoRoll):
-          discard
-        igEndMenu()
-      igEndMainMenuBar()
     transport()
-    if togglePianoRoll:
-      if igBegin("Piano roll"):
-        pianoRoll()
-      igEnd()
   igEnd()
+  if togglePianoRoll:
+    if igBegin("Piano roll"):
+      pianoRoll()
+    igEnd()
 
 proc main() =
   slopgs.init(
