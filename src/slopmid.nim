@@ -785,6 +785,13 @@ proc pianoRoll() =
       2,
     )
     dl.addRect(v2(x0, y + 1), v2(x1, y + keyH - 1), if n.sel: rgb(255, 255, 255) else: rgb(10, 30, 10), 2)
+  let notes = cur().notes
+  for i, a in notes: # same-pitch notes sounding together: red on the shared ticks only
+    for b in notes[i + 1 ..< notes.len]: # ponytail: O(n^2) pairs, sort by pitch if big clips lag
+      let (s, e) = (max(a.start, b.start), min(a.start + a.len, b.start + b.len))
+      if a.pitch == b.pitch and s < e:
+        let y = pitchY(a.pitch)
+        dl.addRectFilled(v2(tickX(s.float), y + 1), v2(tickX(e.float), y + keyH - 1), rgb(255, 30, 30), 2)
   if drag == Box:
     dl.addRectFilled(v2(bx0, by0), v2(bx1, by1), rgb(66, 150, 250, 50))
     dl.addRect(v2(bx0, by0), v2(bx1, by1), rgb(66, 150, 250))
