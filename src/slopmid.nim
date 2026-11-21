@@ -1,6 +1,6 @@
 ## Sheet: left-click adds a note or drags it, its right end resizes it,
 ## right-click deletes. Note names: click to audition. Velocity lane: drag.
-## Wheel scrolls pitch, Shift+wheel scrolls time. Space plays/pauses.
+## Wheel scrolls pitch, Shift+wheel scrolls time, middle-drag pans, Ctrl+middle-drag zooms. Space plays/pauses.
 
 import std/[locks, math, os, strformat]
 import imgui
@@ -298,9 +298,11 @@ proc pianoRoll() =
   discard igInvisibleButton(
     "sheet",
     v2(gridW, paneH),
-    ImGuiButtonFlags.MouseButtonLeft or ImGuiButtonFlags.MouseButtonRight,
+    ImGuiButtonFlags.MouseButtonLeft or ImGuiButtonFlags.MouseButtonRight or
+      ImGuiButtonFlags.MouseButtonMiddle,
   )
   let sheetHovered = igIsItemHovered()
+  let sheetPan = igIsItemActive() and igIsMouseDown(ImGuiMouseButton.Middle)
   igSetCursorScreenPos(v2(gridX, velTop))
   discard igInvisibleButton("vel", v2(gridW, velH))
   let velHeld = igIsItemActive()
@@ -315,6 +317,20 @@ proc pianoRoll() =
 
   let beats = float32(song.clips[song.clip].loopEnd + 4 * BarTicks) / Ppq.float32
     # room to add past the end
+  if sheetPan:
+    if io.keyCtrl: # zoom about the mouse: right/up zooms in
+      let u = (mouse.x - gridX + scrollX) / beatW
+      let v = (mouse.y - sheetTop + scrollY) / keyH
+      beatW = clamp(beatW * exp(io.mouseDelta.x * 0.01), gridW / beats, 256)
+      keyH = clamp(keyH * exp(-io.mouseDelta.y * 0.01), paneH / 128, 40)
+      scrollX = u * beatW - (mouse.x - gridX)
+      scrollY = v * keyH - (mouse.y - sheetTop)
+    else:
+      scrollX -= io.mouseDelta.x
+      scrollY -= io.mouseDelta.y
+  # clamp after the input above, or the frame draws past the edge
+  scrollY = clamp(scrollY, 0, max(0, 128 * keyH - paneH))
+  scrollX = max(scrollX, 0)
   scrollbar("scrollX", false, v2(gridX, bottom), gridW, scrollX, beatW, beats, 256)
   scrollbar("scrollY", true, v2(right, sheetTop), paneH, scrollY, keyH, 128, 40)
 
