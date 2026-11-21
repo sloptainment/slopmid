@@ -10,7 +10,7 @@ const
   Lanes* = 32 ## rows in the song window
   CcNum* = [7, 11] ## the curves: volume, expression
   CcDefault* = [100, 127] ## a track's value with no points; the GM defaults
-  CcSteps* = [Ppq div 4, Ppq div 8, Ppq div 16] ## ticks between messages: 1/16, 1/32, 1/64
+  CcSteps* = [Ppq div 4, Ppq div 8, Ppq div 16, Ppq div 24] ## ticks between messages: 1/16, 1/32, 1/64, 1/96
 
 type
   Note* = object

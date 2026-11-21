@@ -467,8 +467,8 @@ proc pianoRoll() =
   if velMode > 0:
     igSetCursorScreenPos(v2(origin.x + 2, velTop + 14 + igGetFrameHeight()))
     igSetNextItemWidth(KeyW - 4)
-    if igBeginCombo("##volRes", ["1/16", "1/32", "1/64"][cur().ccRes]):
-      for i, name in ["1/16", "1/32", "1/64"]:
+    if igBeginCombo("##volRes", ["1/16", "1/32", "1/64", "1/96"][cur().ccRes]):
+      for i, name in ["1/16", "1/32", "1/64", "1/96"]:
         if igSelectable(cstring(name), i == cur().ccRes):
           cur().ccRes = i
       igEndCombo()
