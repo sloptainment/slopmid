@@ -160,10 +160,10 @@ proc pianoRoll() =
     else:
       -1
   if key != previewKey:
-    if previewKey >= 0:
+    if previewKey >= 0: # note off
       live.add (0x80, previewKey, 0)
-    if key >= 0:
-      live.add (0x90, key, NewVel)
+    if key >= 0: # note on
+      live.add (0x90, key, clamp(int((mouse.x - origin.x) / KeyW * 127), 1, 127))
     previewKey = key
 
   let t = xTick(mouse.x)
