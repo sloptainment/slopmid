@@ -1722,23 +1722,20 @@ proc fileDialogs() =
       fail e
 
 proc ui() =
+  let io = igGetIO()
+  # File shortcuts work with the menu closed, but not under a popup or in a text field
+  let free = not io.wantTextInput and not igIsPopupOpen("", cast[ImGuiPopupFlags](ord(ImGuiPopupFlags.AnyPopupId) or ord(ImGuiPopupFlags.AnyPopupLevel)))
+  proc hot(k: ImGuiKey, shift = false): bool =
+    free and io.keyCtrl and io.keyShift == shift and igIsKeyPressed(k, false)
+  var (hNew, hOpen, hSave, hSaveAs, hExport) =
+    (hot(ImGuiKey.N), hot(ImGuiKey.O), hot(ImGuiKey.S), hot(ImGuiKey.S, true), hot(ImGuiKey.E))
   if igBeginMainMenuBar():
     if igBeginMenu("File"):
-      if igMenuItem("New"):
-        ask NewSong
-      if igMenuItem("Open..."):
-        ask OpenSong
-      if igMenuItem("Save"):
-        if smmPath == "":
-          after = Nothing
-          fbOpen(1)
-        else:
-          discard write(smmPath)
-      if igMenuItem("Save as..."):
-        after = Nothing
-        fbOpen(1)
-      if igMenuItem("Export..."):
-        fbOpen(2)
+      hNew = igMenuItem("New", "Ctrl+N") or hNew
+      hOpen = igMenuItem("Open...", "Ctrl+O") or hOpen
+      hSave = igMenuItem("Save", "Ctrl+S") or hSave
+      hSaveAs = igMenuItem("Save as...", "Ctrl+Shift+S") or hSaveAs
+      hExport = igMenuItem("Export...", "Ctrl+E") or hExport
       igSeparator()
       if igMenuItem("Exit"):
         ask ExitApp
@@ -1770,6 +1767,21 @@ proc ui() =
         discard
       igEndMenu()
     igEndMainMenuBar()
+  if hNew:
+    ask NewSong
+  if hOpen:
+    ask OpenSong
+  if hSave:
+    if smmPath == "":
+      after = Nothing
+      fbOpen(1)
+    else:
+      discard write(smmPath)
+  if hSaveAs:
+    after = Nothing
+    fbOpen(1)
+  if hExport:
+    fbOpen(2)
   # a bar under the menu: the work area shrinks, so no window can cover it
   if igBeginViewportSideBar(
     "transport",
