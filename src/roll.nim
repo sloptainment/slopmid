@@ -48,6 +48,7 @@ type
     metronome*: bool
     clicks*: seq[tuple[offset: int, downbeat: bool]] ## beats in the last `advance`d block, `offset` frames in
     pos*: float ## playhead, ticks
+    idlePos*: float ## the other mode's playhead: song time in clip mode, clip time in song mode; swaps with `pos` on a mode change
     sounding: seq[tuple[src, track, pitch, ch: int]] ## src: index into the block's sources
     sent: array[16, int] ## bank * 128 + program + 1 last sent per channel, 0 = none
 

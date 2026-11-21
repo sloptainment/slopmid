@@ -1,6 +1,7 @@
 ## Sheet: left-click adds a note or drags it, its right end resizes it,
 ## right-click deletes. Note names: click to audition. Velocity lane: drag.
 ## Select tool (corner buttons): drag a box to select, drag a selected note to move them all, Delete removes them; Ctrl+A selects all (or deselects, if anything is selected), Ctrl+D duplicates the selection after its last note, Ctrl+Q quantizes the selection's starts and ends to the snap.
+## Ctrl+C copies the selection, Ctrl+V pastes it as a group at the playhead set on the ruler, rounded to the snap.
 ## Wheel scrolls pitch, Shift+wheel scrolls time, middle-drag pans, Ctrl+middle-drag zooms. Space plays/pauses.
 
 import std/[locks, math, os, sequtils, strformat, strutils]
@@ -128,6 +129,21 @@ var
   pBoxA: ImVec2 # where the selection box started, relative to the scrolled lanes
   pOrig: seq[Placement] # the placements when the drag began; a blocked drop goes back to them
   pBlocked: bool # the drag now would overlap placements in a lane
+  noteClip: seq[Note] # Ctrl+C in the piano roll
+  placeClip: seq[Placement] # Ctrl+C in the song window
+
+proc clipPos(): var float =
+  ## The piano roll's playhead, whichever mode is playing.
+  if song.songMode:
+    result = song.idlePos
+  else:
+    result = song.pos
+
+proc songPos(): var float =
+  if song.songMode:
+    result = song.pos
+  else:
+    result = song.idlePos
 
 proc cur(): var Track =
   if focusTrack >= 0:
@@ -184,7 +200,7 @@ proc transport() =
     if igRadioButton(cstring(name), song.songMode == mode) and song.songMode != mode:
       song.songMode = mode
       song.playing = false # `pos` means something else now
-      song.pos = 0
+      swap(song.pos, song.idlePos)
     igSameLine()
 
 proc scrollbar(
@@ -382,6 +398,19 @@ proc pianoRoll() =
         var m = n
         m.start += at - first
         cur().notes.add m
+  if igIsWindowFocused() and io.keyCtrl and igIsKeyPressed(ImGuiKey.C, false) and not io.wantTextInput:
+    let sel = cur().notes.filterIt(it.sel)
+    if sel.len > 0:
+      noteClip = sel
+  if igIsWindowFocused() and io.keyCtrl and igIsKeyPressed(ImGuiKey.V, false) and not io.wantTextInput and
+      focusTrack >= 0 and noteClip.len > 0:
+    let d = snap(clipPos().int, grid) - noteClip.mapIt(it.start).min # the group's first note lands on the playhead
+    for n in cur().notes.mitems:
+      n.sel = false
+    for n in noteClip:
+      var m = n
+      m.start += d
+      cur().notes.add m
   if igIsWindowFocused() and io.keyCtrl and igIsKeyPressed(ImGuiKey.Q, false) and not io.wantTextInput:
     for n in cur().notes.mitems:
       if n.sel:
@@ -403,8 +432,8 @@ proc pianoRoll() =
   # click or drag on the ruler moves the playhead
   igSetCursorScreenPos(v2(gridX, origin.y))
   discard igInvisibleButton("ruler", v2(gridW, RulerH))
-  if igIsItemActive() and not song.songMode:
-    song.pos = xTick(mouse.x).float
+  if igIsItemActive():
+    clipPos() = xTick(mouse.x).float
 
   igSetCursorScreenPos(v2(origin.x, sheetTop))
   discard igInvisibleButton("keys", v2(KeyW, paneH))
@@ -668,6 +697,8 @@ proc pianoRoll() =
 
   for c in playLines():
     dl.addLine(v2(tickX(c), origin.y), v2(tickX(c), bottom), rgb(255, 255, 255, 180))
+  if song.songMode: # the clip's own position, where Ctrl+V pastes
+    dl.addLine(v2(tickX(song.idlePos), origin.y), v2(tickX(song.idlePos), bottom), rgb(255, 255, 255, 80))
   dl.popClipRect()
 
 var
@@ -715,6 +746,7 @@ proc clips() =
     song.clips.delete gone
     clipNames.delete gone
     song.placements.keepItIf(it.clip != gone)
+    placeClip.setLen 0 # its clip numbers are stale
     pSel = -1
     for p in song.placements.mitems:
       if p.clip > gone:
@@ -862,8 +894,8 @@ proc songPlaylist() =
   # --- input ---
   igSetCursorScreenPos(v2(gridX, origin.y))
   discard igInvisibleButton("ruler", v2(gridW, RulerH))
-  if igIsItemActive() and song.songMode:
-    song.pos = xTick(mouse.x).float
+  if igIsItemActive():
+    songPos() = xTick(mouse.x).float
   igSetCursorScreenPos(v2(gridX, laneTop))
   discard igInvisibleButton(
     "grid",
@@ -901,6 +933,18 @@ proc songPlaylist() =
     let all = not song.placements.anyIt(it.sel) # anything selected: deselect instead
     for p in song.placements.mitems:
       p.sel = all
+  if igIsWindowFocused() and io.keyCtrl and igIsKeyPressed(ImGuiKey.C, false) and not io.wantTextInput:
+    let sel = song.placements.filterIt(it.sel)
+    if sel.len > 0:
+      placeClip = sel
+  if igIsWindowFocused() and io.keyCtrl and igIsKeyPressed(ImGuiKey.V, false) and not io.wantTextInput and
+      placeClip.len > 0:
+    let d = snap(songPos().int, grid) - placeClip.mapIt(it.start).min # the group's first clip lands on the playhead
+    let moved = placeClip.mapIt(Placement(clip: it.clip, lane: it.lane, start: it.start + d, len: it.len, offset: it.offset, sel: true))
+    if moved.allIt(fits(-1, it)): # all or nothing: an overlap anywhere cancels the paste
+      for p in song.placements.mitems:
+        p.sel = false
+      song.placements.add moved
   if igIsWindowFocused() and io.keyCtrl and igIsKeyPressed(ImGuiKey.Q, false) and not io.wantTextInput:
     for i in 0 ..< song.placements.len:
       var p = song.placements[i]
@@ -1107,10 +1151,9 @@ proc songPlaylist() =
     dl.addRectFilled(v2(bx0, by0), v2(bx1, by1), rgb(66, 150, 250, 50))
     dl.addRect(v2(bx0, by0), v2(bx1, by1), rgb(66, 150, 250))
   dl.popClipRect()
-  if song.songMode:
-    dl.pushClipRect(v2(gridX, origin.y), v2(right, bottom), true)
-    dl.addLine(v2(tickX(song.pos), origin.y), v2(tickX(song.pos), bottom), rgb(255, 255, 255, 180))
-    dl.popClipRect()
+  dl.pushClipRect(v2(gridX, origin.y), v2(right, bottom), true)
+  dl.addLine(v2(tickX(songPos()), origin.y), v2(tickX(songPos()), bottom), rgb(255, 255, 255, if song.songMode: 180 else: 80))
+  dl.popClipRect()
 
   # lane numbers and mute/solo, after the backgrounds
   if laneH >= 22: # smaller rows would overlap
