@@ -65,6 +65,10 @@ proc start*(dlsPath: string) =
   initLock(lock)
   createThread(audioThread, audioLoop)
 
+proc occupancy*(): auto =
+  ## The live song's channel use. Call under `lock`.
+  playback.occupancy
+
 proc preview*(status, d1, d2: int) =
   ## Queues a MIDI message for the preview synth, played at the next block's top. Call under `lock`.
   previews.add (status, d1, d2)

@@ -42,6 +42,8 @@ proc transport() =
       song.songMode = mode
       song.playing = false
     igSameLine()
+  let o = occupancy()
+  igText("%s", cstring(&"Rhy:{o.rhy}/{o.rhyMax} Mldy:{o.mel}/{o.melMax}"))
 
 var
   showPianoRoll = true

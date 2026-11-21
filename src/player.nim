@@ -74,6 +74,16 @@ proc rhythmPeak(s: Song): int =
     cur += e.d
     result = max(result, cur)
 
+proc occupancy*(pl: Player): tuple[rhy, rhyMax, mel, melMax: int] =
+  ## Channels with a note sounding, of the channels the synth has set as rhythm parts and the rest.
+  var busy: set[0 .. 15]
+  for x in pl.sounding:
+    busy.incl x.ch
+  result.rhyMax = pl.extra + 1
+  result.melMax = 16 - result.rhyMax
+  for c in busy:
+    if c in RhythmCh[0 .. pl.extra]: inc result.rhy else: inc result.mel
+
 proc soundIdx(pl: Player, src, track, pitch: int): int =
   for i, x in pl.sounding:
     if x.src == src and x.track == track and x.pitch == pitch:
