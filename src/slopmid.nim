@@ -1,8 +1,9 @@
 ## Sheet: left-click adds a note or drags it, its right end resizes it,
 ## right-click deletes. Note names: click to audition. Velocity lane: drag.
+## Select tool (corner buttons): drag a box to select, drag a selected note to move them all, Delete removes them; Ctrl+A selects all.
 ## Wheel scrolls pitch, Shift+wheel scrolls time, middle-drag pans, Ctrl+middle-drag zooms. Space plays/pauses.
 
-import std/[locks, math, os, strformat]
+import std/[locks, math, os, sequtils, strformat]
 import imgui
 import wrap/[alsa, gui, slopgs]
 import roll, gm
@@ -72,6 +73,11 @@ type Drag = enum
   Idle
   Move
   Resize
+  Box ## a selection box
+
+type Tool = enum
+  Draw
+  Select
 
 type ScrollGrab = enum
   GrabBody
@@ -90,6 +96,8 @@ var
   sbGrab: ScrollGrab
   sbOff: float32
   drag = Idle
+  tool = Draw
+  boxA: ImVec2 # where the selection box started, relative to the scrolled sheet
   dragNote, grabTicks: int
   previewKey = -1
   focusTrack = -1 # in clip song.clip; -1 = none
@@ -284,6 +292,34 @@ proc pianoRoll() =
   if igIsItemActive():
     velFrac = clamp((bottom - io.mousePos.y) / bothH, 0.1, 0.9)
 
+  # tool buttons in the corner above the note names
+  for (i, t) in [(0, Draw), (1, Select)]:
+    let a = v2(origin.x + i.float32 * KeyW / 2, origin.y)
+    igSetCursorScreenPos(a)
+    if igInvisibleButton(cstring($t), v2(KeyW / 2, RulerH)):
+      tool = t
+    if igIsItemHovered():
+      igSetTooltip("%s", cstring($t))
+    let c = v2(a.x + KeyW / 4, a.y + RulerH / 2)
+    let col = if tool == t: rgb(255, 255, 255) else: rgb(130, 130, 140)
+    if tool == t:
+      dl.addRectFilled(a, v2(a.x + KeyW / 2, a.y + RulerH), rgb(66, 150, 250), 2)
+    case t
+    of Draw: # a pencil, tip down-left
+      dl.addLine(v2(c.x - 3, c.y + 3), v2(c.x + 5, c.y - 5), col, 3)
+      dl.addLine(v2(c.x - 6, c.y + 6), v2(c.x - 3, c.y + 3), col, 1)
+    of Select: # a dashed rectangle
+      for d in countup(-6, 4, 4):
+        dl.addLine(v2(c.x + d.float32, c.y - 5), v2(c.x + d.float32 + 2, c.y - 5), col)
+        dl.addLine(v2(c.x + d.float32, c.y + 5), v2(c.x + d.float32 + 2, c.y + 5), col)
+      for d in countup(-5, 3, 4):
+        dl.addLine(v2(c.x - 6, c.y + d.float32), v2(c.x - 6, c.y + d.float32 + 2), col)
+        dl.addLine(v2(c.x + 6, c.y + d.float32), v2(c.x + 6, c.y + d.float32 + 2), col)
+
+  if igIsWindowFocused() and io.keyCtrl and igIsKeyPressed(ImGuiKey.A, false) and not io.wantTextInput:
+    for n in cur().notes.mitems:
+      n.sel = true
+
   # click or drag on the ruler moves the playhead
   igSetCursorScreenPos(v2(gridX, origin.y))
   discard igInvisibleButton("ruler", v2(gridW, RulerH))
@@ -349,28 +385,65 @@ proc pianoRoll() =
     igSetMouseCursor(ImGuiMouseCursor.ResizeEW)
 
   if sheetHovered and igIsMouseClicked(ImGuiMouseButton.Left):
-    if hit < 0:
+    if hit < 0 and tool == Draw:
+      for n in cur().notes.mitems:
+        n.sel = false
       cur().notes.add Note(
         start: max(0, snapDown(t, grid)), len: lastLen, pitch: p, vel: lastVel
       )
       hit = cur().notes.high
-    dragNote = hit
-    drag = if onEdge: Resize else: Move
-    grabTicks = t - cur().notes[hit].start
-    lastLen = cur().notes[hit].len
-    lastVel = cur().notes[hit].vel
+    if hit >= 0:
+      dragNote = hit
+      drag = if onEdge: Resize else: Move
+      grabTicks = t - cur().notes[hit].start
+      lastLen = cur().notes[hit].len
+      lastVel = cur().notes[hit].vel
+      if tool == Select and not cur().notes[hit].sel: # a selected note keeps the group
+        if not io.keyShift:
+          for n in cur().notes.mitems:
+            n.sel = false
+        cur().notes[hit].sel = true
+    else:
+      drag = Box
+      boxA = v2(mouse.x - gridX + scrollX, mouse.y - sheetTop + scrollY)
+  # the box in screen space; touched notes get selected on release
+  let (bx0, bx1) = (min(boxA.x + gridX - scrollX, mouse.x), max(boxA.x + gridX - scrollX, mouse.x))
+  let (by0, by1) = (min(boxA.y + sheetTop - scrollY, mouse.y), max(boxA.y + sheetTop - scrollY, mouse.y))
   if not igIsMouseDown(ImGuiMouseButton.Left):
+    if drag == Box:
+      for n in cur().notes.mitems:
+        let touched =
+          tickX(n.start.float) <= bx1 and tickX(float(n.start + n.len)) >= bx0 and
+          pitchY(n.pitch) <= by1 and pitchY(n.pitch) + keyH >= by0
+        if touched:
+          n.sel = true
+        elif not io.keyShift:
+          n.sel = false
     drag = Idle
   case drag
   of Move:
-    cur().notes[dragNote].start = max(0, snap(t - grabTicks, grid))
-    cur().notes[dragNote].pitch = p
+    # the dragged note, or its whole selection, moves by the same ticks and pitches
+    let n = cur().notes[dragNote]
+    var ds = snap(t - grabTicks, grid) - n.start
+    var dp = p - n.pitch
+    for i, m in cur().notes:
+      if (if n.sel: m.sel else: i == dragNote):
+        ds = max(ds, -m.start)
+        dp = clamp(dp, -m.pitch, 127 - m.pitch)
+    for i, m in cur().notes.mpairs:
+      if (if n.sel: m.sel else: i == dragNote):
+        m.start += ds
+        m.pitch += dp
+  of Box:
+    discard
   of Resize:
     let n = cur().notes[dragNote]
     cur().notes[dragNote].len = max(grid, snap(t, grid) - n.start)
     lastLen = cur().notes[dragNote].len
   of Idle:
-    if sheetHovered and igIsMouseDown(ImGuiMouseButton.Right) and hit >= 0:
+    if igIsWindowFocused() and igIsKeyPressed(ImGuiKey.Delete, false) and not io.wantTextInput:
+      cur().notes.keepItIf(not it.sel)
+    elif tool == Draw and sheetHovered and igIsMouseDown(ImGuiMouseButton.Right) and hit >= 0:
       cur().notes.delete hit
 
   # clicking a key or placing/moving a note plays it; dragging across pitches glides
@@ -484,9 +557,15 @@ proc pianoRoll() =
       (tickX(n.start.float), tickX(float(n.start + n.len)), pitchY(n.pitch))
     let shade = 90 + n.vel
     dl.addRectFilled(
-      v2(x0, y + 1), v2(x1, y + keyH - 1), rgb(shade div 2, shade, shade div 2), 2
+      v2(x0, y + 1),
+      v2(x1, y + keyH - 1),
+      if n.sel: rgb(shade, shade, shade div 3) else: rgb(shade div 2, shade, shade div 2),
+      2,
     )
-    dl.addRect(v2(x0, y + 1), v2(x1, y + keyH - 1), rgb(10, 30, 10), 2)
+    dl.addRect(v2(x0, y + 1), v2(x1, y + keyH - 1), if n.sel: rgb(255, 255, 255) else: rgb(10, 30, 10), 2)
+  if drag == Box:
+    dl.addRectFilled(v2(bx0, by0), v2(bx1, by1), rgb(66, 150, 250, 50))
+    dl.addRect(v2(bx0, by0), v2(bx1, by1), rgb(66, 150, 250))
   dl.popClipRect()
   for n in cur().notes:
     let x0 = tickX(n.start.float)
@@ -504,7 +583,9 @@ var
   firstFrame = true
 
 proc focus(clip, track: int) =
-  ## Moving focus stops playback; leaving a clip forgets its mutes and solos.
+  ## Moving focus stops playback and deselects; leaving a clip forgets its mutes and solos.
+  for n in cur().notes.mitems:
+    n.sel = false
   if clip != song.clip:
     for t in song.clips[song.clip].mitems:
       t.mute = false

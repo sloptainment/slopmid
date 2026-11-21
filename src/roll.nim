@@ -12,6 +12,7 @@ type
   Note* = object
     start*, len*: int ## ticks
     pitch*, vel*: int
+    sel*: bool ## selected in the piano roll
 
   Track* = object
     notes*: seq[Note]
