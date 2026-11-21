@@ -289,22 +289,6 @@ proc pianoRoll() =
   scrollbar("scrollX", false, v2(gridX, bottom), gridW, scrollX, beatW, beats, 256)
   scrollbar("scrollY", true, v2(right, sheetTop), paneH, scrollY, keyH, 128, 40)
 
-  # clicking a key plays it; dragging across keys glides
-  let key =
-    if keysHeld:
-      yPitch(mouse.y)
-    else:
-      -1
-  if key != previewKey:
-    let ch = if cur().rhythm: Drums else: PreviewCh
-    if previewKey >= 0: # note off
-      live.add (0x80 or ch, previewKey, 0)
-    if key >= 0: # the track's sound, then note on
-      live.add (0xB0 or ch, 0, cur().bank)
-      live.add (0xC0 or ch, cur().program, 0)
-      live.add (0x90 or ch, key, clamp(int((mouse.x - origin.x) / KeyW * 127), 1, 127))
-    previewKey = key
-
   let t = xTick(mouse.x)
   let p = yPitch(mouse.y)
   var hit = -1
@@ -343,6 +327,25 @@ proc pianoRoll() =
   of Idle:
     if sheetHovered and igIsMouseDown(ImGuiMouseButton.Right) and hit >= 0:
       cur().notes.delete hit
+
+  # clicking a key or placing/moving a note plays it; dragging across pitches glides
+  var key = -1
+  var vel = 0
+  if keysHeld:
+    key = yPitch(mouse.y)
+    vel = clamp(int((mouse.x - origin.x) / KeyW * 127), 1, 127)
+  elif drag == Move:
+    key = cur().notes[dragNote].pitch
+    vel = cur().notes[dragNote].vel
+  if key != previewKey:
+    let ch = if cur().rhythm: Drums else: PreviewCh
+    if previewKey >= 0: # note off
+      live.add (0x80 or ch, previewKey, 0)
+    if key >= 0: # the track's sound, then note on
+      live.add (0xB0 or ch, 0, cur().bank)
+      live.add (0xC0 or ch, cur().program, 0)
+      live.add (0x90 or ch, key, vel)
+    previewKey = key
 
   # dragging in the velocity lane sets the notes whose bar is under the mouse
   if velHeld:
