@@ -319,6 +319,9 @@ proc pianoRoll() =
   if igIsWindowFocused() and io.keyCtrl and igIsKeyPressed(ImGuiKey.A, false) and not io.wantTextInput:
     for n in cur().notes.mitems:
       n.sel = true
+  if igIsWindowFocused() and io.keyCtrl and igIsKeyPressed(ImGuiKey.D, false) and not io.wantTextInput:
+    for n in cur().notes.mitems:
+      n.sel = false
 
   # click or drag on the ruler moves the playhead
   igSetCursorScreenPos(v2(gridX, origin.y))
