@@ -1,3 +1,5 @@
 # restored by `atlas rep` from atlas.lock
 deps/imgui/
 deps/.cache/
+nimcache/
+slopmid.exe
