@@ -14,14 +14,20 @@ const
   SbW = 12f32 # scrollbar thickness
   HdrW = 108f32 # lane numbers and mute/solo in the song window
   EdgeW = 6f32 # grab zone at a note's right end for resizing
-  Snaps = [
-    ("Bar", BarTicks),
-    ("1/2", Ppq * 2),
-    ("1/4", Ppq),
-    ("1/8", Ppq div 2),
-    ("1/16", Ppq div 4),
-    ("1/32", Ppq div 8),
-    ("None", 1),
+  Snaps = [ # name, ticks, triplet (grid lines go to 1/3 of a beat)
+    ("Bar", BarTicks, false),
+    ("1/2", Ppq * 2, false),
+    ("1/3", Ppq div 3, true),
+    ("1/4", Ppq, false),
+    ("1/6", Ppq div 6, true),
+    ("1/8", Ppq div 2, false),
+    ("1/12", Ppq div 12, true),
+    ("1/16", Ppq div 4, false),
+    ("1/24", Ppq div 24, true),
+    ("1/32", Ppq div 8, false),
+    ("1/48", Ppq div 48, true),
+    ("1/64", Ppq div 16, false),
+    ("None", 1, false),
   ]
   Names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
   ClickHz = 1000.0
@@ -93,7 +99,7 @@ type ScrollGrab = enum
   GrabHi
 
 var
-  snapIdx = 4 # 1/16
+  snapIdx = 7 # 1/16
   lastLen = Ppq
   lastVel = 100 # velocity of the last clicked or dragged note
   beatW = 64f32 # zoom: pixels per beat
@@ -162,7 +168,7 @@ proc transport() =
   igSameLine()
   igSetNextItemWidth(70)
   if igBeginCombo("Snap", cstring(Snaps[snapIdx][0])):
-    for i, (name, _) in Snaps:
+    for i, (name, _, _) in Snaps:
       if igSelectable(cstring(name), i == snapIdx):
         snapIdx = i
     igEndCombo()
@@ -585,7 +591,7 @@ proc pianoRoll() =
   dl.pushClipRect(v2(gridX, origin.y), v2(right, bottom), true)
   dl.addRectFilled(v2(gridX, origin.y), v2(right, sheetTop), rgb(30, 30, 30))
   dl.addRectFilled(v2(gridX, velTop), v2(right, bottom), rgb(34, 36, 40))
-  let step = Ppq div 4
+  let step = if Snaps[snapIdx][2]: Ppq div 3 else: Ppq div 4
   var gt = xTick(gridX).snapDown(step)
   while gt <= xTick(right):
     let x = tickX(gt.float)
@@ -1009,15 +1015,18 @@ proc songPlaylist() =
       if l mod 2 == 0: rgb(52, 56, 62) else: rgb(46, 50, 56),
     )
   dl.addRectFilled(v2(gridX, origin.y), v2(right, laneTop), rgb(30, 30, 30)) # over the rows scrolled up
-  var gt = xTick(gridX).snapDown(Ppq)
+  let step = if Snaps[snapIdx][2]: Ppq div 3 else: Ppq
+  var gt = xTick(gridX).snapDown(step)
   while gt <= xTick(right):
     let x = tickX(gt.float)
     dl.addLine(
-      v2(x, laneTop), v2(x, bottom), if gt mod BarTicks == 0: rgb(20, 20, 20) else: rgb(38, 40, 44)
+      v2(x, laneTop),
+      v2(x, bottom),
+      if gt mod BarTicks == 0: rgb(20, 20, 20) elif gt mod Ppq == 0: rgb(38, 40, 44) else: rgb(46, 48, 52),
     )
     if gt mod BarTicks == 0:
       dl.addText(v2(x + 3, origin.y + 1), rgb(200, 200, 200), cstring($(gt div BarTicks + 1)))
-    gt += Ppq
+    gt += step
   dl.popClipRect()
 
   dl.pushClipRect(v2(gridX, laneTop), v2(right, bottom), true)
