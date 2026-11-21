@@ -290,6 +290,30 @@ proc duplicateClip*(s: var Song, i: int) =
     t.mute = false
     t.solo = false
 
+# --- selection: for any seq of items with a `sel` field (notes, curve points, placements) ---
+
+proc toggleAll*[T](xs: var seq[T]) =
+  ## Ctrl+A: selects all, or none if any is selected.
+  let all = not xs.anyIt(it.sel)
+  for x in xs.mitems:
+    x.sel = all
+
+proc clickSelect*[T](xs: var seq[T], i: int, shift: bool) =
+  ## A click on item `i`: a selected one keeps the group; else it is selected, with Shift added to the selection, without replacing it.
+  if not xs[i].sel:
+    if not shift:
+      for x in xs.mitems:
+        x.sel = false
+    xs[i].sel = true
+
+proc boxSelect*[T](xs: var seq[T], shift: bool, inBox: proc(x: T): bool) =
+  ## A box ends: the items it touches get selected; the rest are deselected unless Shift is held.
+  for x in xs.mitems:
+    if inBox(x):
+      x.sel = true
+    elif not shift:
+      x.sel = false
+
 when isMainModule:
   proc nt(start, len, pitch: int, sel = false): Note =
     Note(start: start, len: len, pitch: pitch, sel: sel)
@@ -464,4 +488,31 @@ when isMainModule:
   sg.duplicateClip(0)
   doAssert sg.clips.len == 2 and sg.clips[1].name == "a" and not sg.clips[1].tracks[0].mute and not sg.clips[1].tracks[0].solo
   doAssert sg.clips[0].tracks[0].mute
+
+  # toggleAll: all, or none if any is selected
+  var sn = @[nt(0, 1, 60), nt(0, 1, 61, true)]
+  sn.toggleAll
+  doAssert sn.allIt(not it.sel)
+  sn.toggleAll
+  doAssert sn.allIt(it.sel)
+  # clickSelect: a selected item keeps the group; else Shift adds, a plain click replaces
+  sn = @[nt(0, 1, 60, true), nt(0, 1, 61, true), nt(0, 1, 62)]
+  sn.clickSelect(0, false)
+  doAssert sn.mapIt(it.sel) == @[true, true, false]
+  sn.clickSelect(2, true)
+  doAssert sn.mapIt(it.sel) == @[true, true, true]
+  sn.clickSelect(1, false)
+  doAssert sn.mapIt(it.sel) == @[true, true, true]
+  sn = @[nt(0, 1, 60, true), nt(0, 1, 61), nt(0, 1, 62)]
+  sn.clickSelect(2, false)
+  doAssert sn.mapIt(it.sel) == @[false, false, true]
+  # boxSelect: touched ones selected; the rest deselected unless Shift
+  sn = @[nt(0, 1, 60, true), nt(0, 1, 61), nt(0, 1, 62)]
+  sn.boxSelect(true, proc(n: Note): bool = n.pitch == 61)
+  doAssert sn.mapIt(it.sel) == @[true, true, false]
+  sn.boxSelect(false, proc(n: Note): bool = n.pitch == 62)
+  doAssert sn.mapIt(it.sel) == @[false, false, true]
+  var cpts: seq[CurvePt] = @[(0, 1, true), (10, 2, false)] # curve points too
+  cpts.boxSelect(false, proc(p: CurvePt): bool = p.t == 10)
+  doAssert cpts.mapIt(it.sel) == @[false, true]
   echo "edit: ok"

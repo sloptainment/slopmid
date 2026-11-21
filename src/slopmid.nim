@@ -96,12 +96,12 @@ var
   volDrag = -1 # index of the curve point being dragged
   bendNote = -1 # the note whose bend point is being dragged, and which point of its `bend`
   bendPt: int
-  bendBox: bool # a selection box of bend points is being dragged, from `boxA`
-  ptBoxA: ImVec2 # where the lane's selection box started, relative to the scrolled lane
+  bendBox: bool # a selection box of bend points is being dragged, from `box`
+  ptBox: Box # the lane's selection box
   velFrac = 0.25f32 # share of the sheet+velocity height taken by the velocity lane
   drag = Idle
   tool = Draw
-  boxA: ImVec2 # where the selection box started, relative to the scrolled sheet
+  box: Box # the sheet's selection box
   dragNote, grabTicks: int
   velLine: seq[int] # notes whose velocity line was clicked, kept for the drag
   previewKey = -1
@@ -112,7 +112,7 @@ var
   pIdx, pGrab: int
   pSel = -1 # the clicked placement, drawn with a white border
   songTool = Draw
-  pBoxA: ImVec2 # where the selection box started, relative to the scrolled lanes
+  pBox: Box # the lanes' selection box
   pOrig: seq[Placement] # the placements when the drag began; a blocked drop goes back to them
   pBlocked: bool # the drag now would overlap placements in a lane
   noteClip: seq[Note] # Ctrl+C in the piano roll
@@ -279,9 +279,7 @@ proc pianoRoll() =
 
   if velMode == 0 and fired("Piano roll", SelectAll, ImGuiKey.A):
     if notesOk:
-      let all = not cur().notes.anyIt(it.sel) # anything selected: deselect instead
-      for n in cur().notes.mitems:
-        n.sel = all
+      cur().notes.toggleAll
     else:
       let all = not cur().notes.anyIt(it.bend.anyIt(it.sel))
       for n in cur().notes.mitems:
@@ -421,11 +419,10 @@ proc pianoRoll() =
           bendNote = -1
       else:
         bendBox = true
-        boxA = v2(mouse.x - gridX + rollView.scrollX, mouse.y - sheetTop + rollView.scrollY)
+        box.start(rollView, mouse)
     if not igIsMouseDown(ImGuiMouseButton.Left):
       if bendBox: # the points in the box get selected
-        let (bx0, bx1) = (min(boxA.x + gridX - rollView.scrollX, mouse.x), max(boxA.x + gridX - rollView.scrollX, mouse.x))
-        let (by0, by1) = (min(boxA.y + sheetTop - rollView.scrollY, mouse.y), max(boxA.y + sheetTop - rollView.scrollY, mouse.y))
+        let (bx0, by0, bx1, by1) = box.rect(rollView, mouse)
         for n in cur().notes.mitems:
           for k in n.bendIdx:
             let q = bendXY(n, k)
@@ -460,27 +457,19 @@ proc pianoRoll() =
       grabTicks = t - cur().notes[hit].start
       lastLen = cur().notes[hit].len
       lastVel = cur().notes[hit].vel
-      if tool == Select and not cur().notes[hit].sel: # a selected note keeps the group
-        if not io.keyShift:
-          for n in cur().notes.mitems:
-            n.sel = false
-        cur().notes[hit].sel = true
+      if tool == Select:
+        cur().notes.clickSelect(hit, io.keyShift)
     else:
       drag = Box
-      boxA = v2(mouse.x - gridX + rollView.scrollX, mouse.y - sheetTop + rollView.scrollY)
+      box.start(rollView, mouse)
   # the box in screen space; touched notes get selected on release
-  let (bx0, bx1) = (min(boxA.x + gridX - rollView.scrollX, mouse.x), max(boxA.x + gridX - rollView.scrollX, mouse.x))
-  let (by0, by1) = (min(boxA.y + sheetTop - rollView.scrollY, mouse.y), max(boxA.y + sheetTop - rollView.scrollY, mouse.y))
   if not igIsMouseDown(ImGuiMouseButton.Left):
     if drag == Box:
-      for n in cur().notes.mitems:
-        let touched =
-          tickX(n.start.float) <= bx1 and tickX(float(n.start + n.len)) >= bx0 and
+      let (bx0, by0, bx1, by1) = box.rect(rollView, mouse)
+      cur().notes.boxSelect(io.keyShift, proc(n: Note): bool =
+        tickX(n.start.float) <= bx1 and tickX(float(n.start + n.len)) >= bx0 and
           pitchY(n.pitch) <= by1 and pitchY(n.pitch) + rollView.rowH >= by0
-        if touched:
-          n.sel = true
-        elif not io.keyShift:
-          n.sel = false
+      )
     drag = Idle
   case drag
   of Move:
@@ -542,9 +531,7 @@ proc pianoRoll() =
       abs(bottom - float32(cur().ccAt(velMode - 1, t)) / 127 * valH - mouse.y) <= 6
   if velMode > 0:
     if fired("Piano roll", SelectAll, ImGuiKey.A):
-      let all = not pts.anyIt(it.sel) # anything selected: deselect instead
-      for p in pts.mitems:
-        p.sel = all
+      pts.toggleAll
     if fired("Piano roll", Delete, ImGuiKey.Delete, ctrl = false):
       pts.keepItIf(not it.sel)
     if fired("Piano roll", Copy, ImGuiKey.C) and pts.anyIt(it.sel):
@@ -563,24 +550,18 @@ proc pianoRoll() =
           addPt(CcDefault[2])
         volDrag = -2 # no drag, no box
       elif tool == Select:
-        if volDrag >= 0 and not pts[volDrag].sel: # a selected point keeps the group
-          if not io.keyShift:
-            for p in pts.mitems:
-              p.sel = false
-          pts[volDrag].sel = true
-        elif volDrag < 0: # empty space: a box
-          ptBoxA = v2(mouse.x - gridX + rollView.scrollX, mouse.y)
+        if volDrag >= 0:
+          pts.clickSelect(volDrag, io.keyShift)
+        else: # empty space: a box
+          ptBox.start(rollView, mouse, scrollsY = false)
       elif volDrag < 0: # a click on empty space adds a point, at the snap
         addPt(volVal())
-    let (bx0, bx1) = (min(ptBoxA.x + gridX - rollView.scrollX, mouse.x), max(ptBoxA.x + gridX - rollView.scrollX, mouse.x))
-    let (by0, by1) = (min(ptBoxA.y, mouse.y), max(ptBoxA.y, mouse.y))
     if tool == Select and volDrag == -1 and velUp: # a box ends: the points in it get selected
-      for i, p in pts:
+      let (bx0, by0, bx1, by1) = ptBox.rect(rollView, mouse)
+      pts.boxSelect(io.keyShift, proc(p: CurvePt): bool =
         let (x, y) = (tickX(p.t.float), bottom - float32(p.v) / 127 * valH)
-        if x >= bx0 and x <= bx1 and y >= by0 and y <= by1:
-          pts[i].sel = true
-        elif not io.keyShift:
-          pts[i].sel = false
+        x >= bx0 and x <= bx1 and y >= by0 and y <= by1
+      )
     if velHeld and volDrag in 0 ..< pts.len:
       # the dragged point, or in Select its whole selection, moves by the same ticks and values
       pts.moveCurvePts(
@@ -719,8 +700,7 @@ proc pianoRoll() =
           dl.addCircleFilled(bendXY(n, k), 5, rgb(255, 150, 30))
         dl.addCircle(bendXY(n, k), 5, c, 0, 2)
   if drag == Box or bendBox:
-    dl.addRectFilled(v2(bx0, by0), v2(bx1, by1), rgb(66, 150, 250, 50))
-    dl.addRect(v2(bx0, by0), v2(bx1, by1), rgb(66, 150, 250))
+    box.draw(rollView, dl, mouse)
   dl.popClipRect()
   if velMode > 0:
     dl.pushClipRect(v2(gridX, velTop), v2(right, bottom), true)
@@ -735,10 +715,7 @@ proc pianoRoll() =
     for p in pts:
       dl.addCircleFilled(pt(p), 4, if p.sel: rgb(255, 255, 85) else: col)
     if tool == Select and velHeld and volDrag == -1:
-      let (bx0, bx1) = (min(ptBoxA.x + gridX - rollView.scrollX, mouse.x), max(ptBoxA.x + gridX - rollView.scrollX, mouse.x))
-      let (by0, by1) = (min(ptBoxA.y, mouse.y), max(ptBoxA.y, mouse.y))
-      dl.addRectFilled(v2(bx0, by0), v2(bx1, by1), rgb(66, 150, 250, 50))
-      dl.addRect(v2(bx0, by0), v2(bx1, by1), rgb(66, 150, 250))
+      ptBox.draw(rollView, dl, mouse)
     let last = pt(pts[^1]) # held to the loop point
     dl.addLine(last, v2(le, last.y), col, 2)
     dl.popClipRect()
@@ -963,9 +940,7 @@ proc songPlaylist() =
 
   toolButtons(songTool, origin)
   if fired("Song", SelectAll, ImGuiKey.A):
-    let all = not song.placements.anyIt(it.sel) # anything selected: deselect instead
-    for p in song.placements.mitems:
-      p.sel = all
+    song.placements.toggleAll
   if fired("Song", Copy, ImGuiKey.C):
     let sel = song.placements.filterIt(it.sel)
     if sel.len > 0:
@@ -1005,32 +980,23 @@ proc songPlaylist() =
       pSel = hit
       pGrab = t - song.placements[hit].start
       pdrag = if onR: PTrimR elif onL: PTrimL else: PMove
-      if songTool == Select and not song.placements[hit].sel: # a selected one keeps the group
-        if not io.keyShift:
-          for q in song.placements.mitems:
-            q.sel = false
-        song.placements[hit].sel = true
+      if songTool == Select:
+        song.placements.clickSelect(hit, io.keyShift)
     else:
       pdrag = PBox
-      pBoxA = v2(mouse.x - gridX + songView.scrollX, mouse.y - laneTop + songView.scrollY)
+      pBox.start(songView, mouse)
     if pdrag in {PMove, PTrimL, PTrimR}:
       pOrig = song.placements
-  # the box in screen space; touched placements get selected on release
-  let (bx0, bx1) = (min(pBoxA.x + gridX - songView.scrollX, mouse.x), max(pBoxA.x + gridX - songView.scrollX, mouse.x))
-  let (by0, by1) = (min(pBoxA.y + laneTop - songView.scrollY, mouse.y), max(pBoxA.y + laneTop - songView.scrollY, mouse.y))
   proc moving(i: int): bool =
     song.placements.moves(pIdx, pdrag, i)
 
   if not igIsMouseDown(ImGuiMouseButton.Left):
-    if pdrag == PBox:
-      for p in song.placements.mitems:
-        let touched =
-          tickX(p.start.float) <= bx1 and tickX(float(p.start + p.len)) >= bx0 and
+    if pdrag == PBox: # touched placements get selected
+      let (bx0, by0, bx1, by1) = pBox.rect(songView, mouse)
+      song.placements.boxSelect(io.keyShift, proc(p: Placement): bool =
+        tickX(p.start.float) <= bx1 and tickX(float(p.start + p.len)) >= bx0 and
           laneY(p.lane) <= by1 and laneY(p.lane) + songView.rowH >= by0
-        if touched:
-          p.sel = true
-        elif not io.keyShift:
-          p.sel = false
+      )
     elif pdrag != PIdle and pBlocked: # overlapping: it goes back where it was
       song.placements = pOrig
     pdrag = PIdle
@@ -1110,8 +1076,7 @@ proc songPlaylist() =
       dl.addLine(v2(tickX(m.float), y + 1), v2(tickX(m.float), y + songView.rowH - 2), rgb(255, 255, 255), 2)
       m += loop
   if pdrag == PBox:
-    dl.addRectFilled(v2(bx0, by0), v2(bx1, by1), rgb(66, 150, 250, 50))
-    dl.addRect(v2(bx0, by0), v2(bx1, by1), rgb(66, 150, 250))
+    pBox.draw(songView, dl, mouse)
   dl.popClipRect()
   dl.pushClipRect(v2(gridX, origin.y), v2(right, bottom), true)
   dl.addLine(v2(tickX(song.songPos), origin.y), v2(tickX(song.songPos), bottom), rgb(255, 255, 255, if song.songMode: 180 else: 80))

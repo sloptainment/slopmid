@@ -17,6 +17,10 @@ type
     maxRowH*: float32
     x*, rulerY*, top*, w*, h*: float32 # this frame's grid: left, ruler top, rows' top, width, rows' height
 
+  Box* = object ## a drag-a-rectangle selection: the anchor is in content coordinates, so it follows the scroll
+    a: ImVec2
+    scrollsY: bool # false: the anchor's y is a screen y (the curve lane, which does not scroll rows)
+
   ScrollGrab = enum
     GrabBody
     GrabLo
@@ -208,6 +212,21 @@ proc drawGrid*(v: View, dl: ptr ImDrawList, minor: int, bottom: float32) =
       dl.addText(v2(x + 3, v.rulerY + 1), rgb(200, 200, 200), cstring($(gt div BarTicks + 1)))
     gt += minor
 
+proc start*(b: var Box, v: View, mouse: ImVec2, scrollsY = true) =
+  ## Anchors the box at the mouse.
+  b.scrollsY = scrollsY
+  b.a = v2(mouse.x - v.x + v.scrollX, if scrollsY: mouse.y - v.top + v.scrollY else: mouse.y)
+
+proc rect*(b: Box, v: View, mouse: ImVec2): tuple[x0, y0, x1, y1: float32] =
+  ## The box in screen space, from its anchor to the mouse.
+  let (ax, ay) = (b.a.x + v.x - v.scrollX, if b.scrollsY: b.a.y + v.top - v.scrollY else: b.a.y)
+  (min(ax, mouse.x), min(ay, mouse.y), max(ax, mouse.x), max(ay, mouse.y))
+
+proc draw*(b: Box, v: View, dl: ptr ImDrawList, mouse: ImVec2) =
+  let (x0, y0, x1, y1) = b.rect(v, mouse)
+  dl.addRectFilled(v2(x0, y0), v2(x1, y1), rgb(66, 150, 250, 50))
+  dl.addRect(v2(x0, y0), v2(x1, y1), rgb(66, 150, 250))
+
 when isMainModule:
   var v = View(beatW: 64, rowH: 14, scrollX: 128, scrollY: 100, rows: 128, maxRowH: 160)
   v.place(50, 10, 400, 300)
@@ -218,4 +237,15 @@ when isMainModule:
   v.scrollY = 1e6
   v.place(50, 10, 400, 300) # scroll stays inside the content
   doAssert v.scrollY == 128 * 14 - 300
+  var b: Box
+  v.scrollX = 128
+  v.scrollY = 100
+  b.start(v, v2(100, 60)) # content (178, 132) at scroll (128, 100)
+  doAssert b.rect(v, v2(60, 40)) == (60f32, 40f32, 100f32, 60f32)
+  v.scrollX = 0
+  v.scrollY = 0
+  doAssert b.rect(v, v2(500, 500)) == (50f32 + 178, 28f32 + 132, 500f32, 500f32) # follows the scroll
+  b.start(v, v2(100, 60), scrollsY = false)
+  v.scrollY = 50
+  doAssert b.rect(v, v2(200, 100)) == (100f32, 60f32, 200f32, 100f32) # y stays on the screen
   echo "view ok"
