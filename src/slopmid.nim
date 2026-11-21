@@ -22,6 +22,10 @@ const
     ("None", 1),
   ]
   Names = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+  ClickHz = 1000.0
+  ClickDownHz = 1500.0 # the first beat of a bar
+  ClickLen = 1000 # samples
+  ClickAmp = 8000.0 # of 32767
   # a block and a half, as in slopgs's alsa-synth.c
   LatencyUs = 3 * 1_000_000 * BlockFrames div Rate div 2
 
@@ -36,6 +40,9 @@ var
 
 proc audioLoop() {.thread.} =
   var buf, pbuf: Block
+  var clicks: seq[tuple[offset: int, downbeat: bool]]
+  var hz = ClickHz
+  var click = ClickLen # samples of the current click played; ClickLen = silent
   while true:
     {.cast(gcsafe).}:
       withLock(lock):
@@ -46,8 +53,18 @@ proc audioLoop() {.thread.} =
           slopgs.midi(synth, m.offset, m.status, m.d1, m.d2)
         slopgs.render(synth, buf)
         slopgs.render(previewSynth, pbuf)
-      for i in 0 ..< buf.len:
-        buf[i] = clamp(buf[i].int + pbuf[i].int, int16.low.int, int16.high.int).int16
+        clicks = song.clicks
+      for f in 0 ..< BlockFrames:
+        for (at, down) in clicks:
+          if at == f:
+            click = 0
+            hz = if down: ClickDownHz else: ClickHz
+        var c = 0
+        if click < ClickLen: # a sine that fades out, so it ends without a pop
+          c = int(sin(2 * PI * hz * click.float / Rate) * (1 - click / ClickLen) * ClickAmp)
+          inc click
+        for i in [2 * f, 2 * f + 1]:
+          buf[i] = clamp(buf[i].int + pbuf[i].int + c, int16.low.int, int16.high.int).int16
       pcm.write(buf)
 
 # --- UI state, UI thread only ---
@@ -103,6 +120,13 @@ proc transport() =
   if igButton("Stop", v2(60, 0)) and focusTrack >= 0:
     song.playing = false
     song.pos = 0
+  igSameLine()
+  igPushStyleColor(
+    ImGuiCol.Button, if song.metronome: rgb(66, 150, 250) else: rgb(60, 60, 64)
+  )
+  if igButton("Metronome"):
+    song.metronome = not song.metronome
+  igPopStyleColor()
   igSameLine()
   igSetNextItemWidth(110)
   var bpm = song.bpm.float32

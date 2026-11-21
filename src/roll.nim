@@ -31,6 +31,8 @@ type
     clip*: int ## the one that plays
     bpm*: float
     playing*: bool
+    metronome*: bool
+    clicks*: seq[tuple[offset: int, downbeat: bool]] ## beats in the last `advance`d block, `offset` frames in
     pos*: float ## playhead, ticks
     sounding: seq[tuple[track, pitch, ch: int]]
     sent: array[16, int] ## bank * 128 + program + 1 last sent per channel, 0 = none
@@ -70,6 +72,7 @@ proc advance*(s: var Song, frames, rate: int): seq[Msg] =
     s.clips[s.clip]
 
   var evs: seq[Ev]
+  s.clicks.setLen 0
   if s.playing:
     let fpt = rate.float / (s.bpm / 60 * Ppq) # frames per tick
     let lend = ts.loopEnd.float
@@ -88,6 +91,9 @@ proc advance*(s: var Song, frames, rate: int): seq[Msg] =
       b -= lend
       segs.add (0.0, b, seam)
     for (lo, hi, base) in segs:
+      if s.metronome:
+        for beat in ceil(lo / Ppq).int ..< ceil(hi / Ppq).int:
+          s.clicks.add (round(base + ((beat * Ppq).float - lo) * fpt).int, beat mod 4 == 0)
       for ti, t in ts:
         if not ts.audible(ti):
           continue
@@ -176,6 +182,21 @@ when isMainModule:
   doAssert s.advance(1024, 22050).keys.len == 1
   s.pos = BarTicks - 4
   doAssert s.advance(1024, 22050) == @[(459, 0x80, 64, 0).Msg, (459, 0x90, 64, 90)]
+  # metronome: a click per beat, 11025 frames apart at 120 BPM; none when off
+  var c = Song(bpm: 120, playing: true, clips: @[@[Track()]])
+  discard c.advance(1024, 22050)
+  doAssert c.clicks.len == 0
+  c.metronome = true
+  c.pos = 0
+  discard c.advance(1024, 22050)
+  doAssert c.clicks == @[(0, true)], $c.clicks
+  c.pos = 10 * 1024 / 11025 * Ppq # block 10: beat 1 at frame 11025 = offset 785
+  discard c.advance(1024, 22050)
+  doAssert c.clicks == @[(785, false)], $c.clicks
+  # the loop seam (bar end, tick 384 = frame 44100) is a beat too
+  c.pos = BarTicks - 4
+  discard c.advance(1024, 22050)
+  doAssert c.clicks == @[(459, true)], $c.clicks
   doAssert snap(47, 24) == 48 and snap(-13, 24) == -24 and snapDown(47, 24) == 24
   doAssert @[Track(notes: @[Note(start: 380, len: 8)])].loopEnd == 2 * BarTicks
 
