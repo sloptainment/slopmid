@@ -269,6 +269,16 @@ proc scrollbar(
       3,
     )
 
+iterator playLines(): float =
+  ## Clip time of each playhead line in the current clip: one per playing placement in song mode.
+  if song.songMode:
+    for p in song.placements:
+      let c = p.clipTime(song.clips[p.clip].loopEnd, song.pos)
+      if p.clip == song.clip and c >= 0:
+        yield c
+  else:
+    yield song.pos
+
 proc pianoRoll() =
   let io = igGetIO()
   let dl = igGetWindowDrawList()
@@ -615,14 +625,8 @@ proc pianoRoll() =
     dl.addLine(v2(x0, bottom), v2(x0, vy), rgb(110, 210, 110), 2)
     dl.addCircleFilled(v2(x0, vy), 4, rgb(110, 210, 110))
 
-  if song.songMode: # a line for each placement of this clip that is playing
-    for p in song.placements:
-      let c = p.clipTime(song.clips[p.clip].loopEnd, song.pos)
-      if p.clip == song.clip and c >= 0:
-        dl.addLine(v2(tickX(c), origin.y), v2(tickX(c), bottom), rgb(255, 255, 255, 180))
-  else:
-    let px = tickX(song.pos)
-    dl.addLine(v2(px, origin.y), v2(px, bottom), rgb(255, 255, 255, 180))
+  for c in playLines():
+    dl.addLine(v2(tickX(c), origin.y), v2(tickX(c), bottom), rgb(255, 255, 255, 180))
   dl.popClipRect()
 
 var
@@ -765,6 +769,9 @@ proc clips() =
             v2(x0 + float32(n.start + n.len) / span * size.x, y + max(rowH, 1)),
             rgb(110, 210, 110),
           )
+      for c in playLines():
+        let x = x0 + c / span * size.x
+        dl.addLine(v2(x, y0), v2(x, y0 + size.y), rgb(255, 255, 255, 180))
       igPopID()
     igEndTable()
   if igButton("ADD"):
