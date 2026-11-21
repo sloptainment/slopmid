@@ -1,7 +1,7 @@
 ## Sheet: left-click adds a note or drags it, its right end resizes it,
 ## right-click deletes. Note names: click to audition. Velocity lane: drag.
 ## Select tool (corner buttons): drag a box to select (in the Vol/Exp lane: curve points; Shift adds), drag a selected note to move them all, Delete removes them; Ctrl+A selects all (or deselects, if anything is selected), Ctrl+D duplicates the selection after its last note, Ctrl+Q quantizes the selection's starts and ends to the snap.
-## Ctrl+C copies the selection, Ctrl+V pastes it as a group at the playhead set on the ruler, rounded to the snap. In the Vol/Exp/Pan lane they copy and paste curve points, replacing the points the pasted span covers.
+## Ctrl+C copies the selection, Ctrl+V pastes it as a group at the playhead set on the ruler, rounded to the snap. They act on what was clicked last: in the Vol/Exp/Pan lane, curve points (a paste replaces the points the pasted span covers); in the sheet or the Vel lane, notes. A paste only takes what the last copy took.
 ## Bend tool (corner buttons): every note shows its pitch bend as a line between points, the first at its start and the last at its end (pinned in time). Drag a point (up/down is semitones from the note, continuous), click the line or a note to add one at the snap, right-drag a middle point to delete it, Ctrl+click puts a point on the note's own pitch. Selection as in Select, built in: click, Shift+click, drag a box, Delete, Ctrl+A. Notes themselves are untouched.
 ## Wheel scrolls pitch, Shift+wheel scrolls time, middle-drag pans, Ctrl+middle-drag zooms. Space plays/pauses.
 
@@ -42,6 +42,8 @@ type
     previewKey: int
     noteClip: seq[Note] # Ctrl+C in the piano roll
     ccClip: seq[CurvePt] # Ctrl+C in a Vol/Exp/Pan lane
+    laneFocus: bool # the last click was in the lane, not the sheet
+    ccCopied: bool # the last Ctrl+C took curve points: Ctrl+V pastes them only in a curve lane, and notes only elsewhere
 
 var st = RollState(
   view: View(beatW: 64, rowH: 14, scrollY: float32(127 - 84) * 14, rows: 128, maxRowH: 160),
@@ -55,6 +57,9 @@ var st = RollState(
 
 template curveIdx(): int =
   ord(st.laneMode) - 1 # only in a curve mode
+
+template curveFocus(): bool =
+  st.laneFocus and st.laneMode != Vel # Ctrl+C/V act on curve points, else on notes
 
 
 proc pianoRollWindow*() =
@@ -119,11 +124,14 @@ proc pianoRollWindow*() =
           n.bend[k].sel = all and n.bendVisible(k)
   if notesOk and fired(RollEd, Duplicate, ImGuiKey.D):
     focused().notes.duplicate(grid)
-  if notesOk and st.laneMode == Vel and fired(RollEd, Copy, ImGuiKey.C):
+  if igIsWindowHovered() and igIsMouseClicked(ImGuiMouseButton.Left) and mouse.y >= sheetTop and mouse.y < bottom:
+    st.laneFocus = mouse.y >= velTop
+  if notesOk and not curveFocus and fired(RollEd, Copy, ImGuiKey.C):
     let sel = focused().notes.filterIt(it.sel)
     if sel.len > 0:
       st.noteClip = sel
-  if notesOk and st.laneMode == Vel and fired(RollEd, Paste, ImGuiKey.V) and focusTrack >= 0 and st.noteClip.len > 0:
+      st.ccCopied = false
+  if notesOk and not curveFocus and not st.ccCopied and fired(RollEd, Paste, ImGuiKey.V) and focusTrack >= 0 and st.noteClip.len > 0:
     focused().notes.pasteNotes(st.noteClip, snap(song.clipPos.int, grid)) # the group's first note lands on the playhead
   if notesOk and fired(RollEd, Quantize, ImGuiKey.Q):
     focused().notes.quantize(grid)
@@ -366,9 +374,10 @@ proc pianoRollWindow*() =
       pts.toggleAll
     if fired(RollEd, Delete, ImGuiKey.Delete, ctrl = false):
       pts.keepItIf(not it.sel)
-    if fired(RollEd, Copy, ImGuiKey.C) and pts.anyIt(it.sel):
+    if curveFocus and fired(RollEd, Copy, ImGuiKey.C) and pts.anyIt(it.sel):
       st.ccClip = pts.filterIt(it.sel)
-    if fired(RollEd, Paste, ImGuiKey.V) and st.ccClip.len > 0:
+      st.ccCopied = true
+    if curveFocus and st.ccCopied and fired(RollEd, Paste, ImGuiKey.V) and st.ccClip.len > 0:
       pts.pasteCurve(st.ccClip, snap(song.clipPos.int, grid), loopT) # the first point lands on the playhead
   if st.laneMode != Vel:
     if pts.len == 0: # the default, as a point at the start
