@@ -28,3 +28,15 @@ const GmNames* = [
   "Telephone Ring", "Helicopter", "Applause", "Gunshot",
 ]
 static: doAssert GmNames.len == 128
+
+## General MIDI percussion names for notes 35 .. 81, abbreviated to fit the key column.
+const DrumNames* = [
+  "AcKick", "Kick", "SideStk", "Snare", "Clap", "ElSnare", "LoFlTom", "ClHat",
+  "HiFlTom", "PdlHat", "LowTom", "OpHat", "LoMdTom", "HiMdTom", "Crash1", "HiTom",
+  "Ride1", "China", "RideBel", "Tamb", "Splash", "Cowbell", "Crash2", "Vibslap",
+  "Ride2", "HiBongo", "LoBongo", "MuHiCng", "OpHiCng", "LoConga", "HiTimb", "LoTimb",
+  "HiAgogo", "LoAgogo", "Cabasa", "Maracas", "ShWhstl", "LgWhstl", "ShGuiro",
+  "LgGuiro", "Claves", "HiWdBlk", "LoWdBlk", "MuCuica", "OpCuica", "MuTrngl", "OpTrngl",
+]
+const DrumLow* = 35
+static: doAssert DrumNames.len == 47

@@ -142,6 +142,8 @@ proc v2(x, y: float32): ImVec2 =
   ImVec2(x: x, y: y)
 
 proc noteName(p: int): string =
+  if cur().rhythm and p - DrumLow in 0 .. DrumNames.high:
+    return DrumNames[p - DrumLow]
   Names[p mod 12] & $(p div 12 - 1)
 
 proc transport() =
