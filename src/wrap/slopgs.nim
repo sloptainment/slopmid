@@ -24,6 +24,7 @@ proc dls_load(data: pointer, len: uint32): cint {.importc, cdecl.}
 proc synth_construct() {.importc, cdecl.}
 proc synth_midi(status, d1, d2: uint32) {.importc, cdecl.}
 proc voice_set_event_offset(frames: uint32) {.importc, cdecl.}
+proc synth_sysex(buf: ptr uint8, len: uint32) {.importc, cdecl.}
 proc render_frames(output: ptr int16, frames: uint32) {.importc, cdecl.}
 
 # rt.h: the host supplies the allocator. Never freed, like alsa-synth.c's.
@@ -44,6 +45,11 @@ proc init*(dlsPath: string) =
   if dls_load(dls[0].addr, dls.len.uint32) != 0:
     raise newException(IOError, dlsPath & " is not a usable gm.dls")
   synth_construct()
+
+proc gsReset*() =
+  ## Roland GS Reset. The engine ignores bank select (CC0/CC32) until it has run.
+  var msg = [0x41'u8, 0x10, 0x42, 0x12, 0x40, 0x00, 0x7F, 0x00, 0x41, 0xF7]
+  synth_sysex(msg[0].addr, msg.len.uint32) # after the F0
 
 proc midi*(offset, status, d1, d2: int) =
   ## A short message, acting `offset` frames into the next `render`.

@@ -5,7 +5,7 @@
 import std/[locks, math, os, strformat]
 import imgui
 import wrap/[alsa, gui, slopgs]
-import roll
+import roll, gm
 
 const
   KeyW = 56f32 # note-name column
@@ -28,7 +28,7 @@ const
 # --- shared with the audio thread, under `lock` ---
 var
   lock: Lock
-  song = Song(bpm: 120)
+  song = Song(bpm: 120, clips: newSeq[seq[Track]](1))
   live: seq[(int, int, int)] # key previews, played at the next block's top
   pcm: Pcm
   audio: Thread[void]
@@ -41,8 +41,8 @@ proc audioLoop() {.thread.} =
         for (status, d1, d2) in live:
           slopgs.midi(0, status, d1, d2)
         live.setLen(0)
-        for e in song.advance(BlockFrames, Rate):
-          slopgs.midi(e.offset, (if e.on: 0x90 else: 0x80), e.pitch, e.vel)
+        for m in song.advance(BlockFrames, Rate):
+          slopgs.midi(m.offset, m.status, m.d1, m.d2)
         slopgs.render(buf)
       pcm.write(buf)
 
@@ -71,6 +71,14 @@ var
   drag = Idle
   dragNote, grabTicks: int
   previewKey = -1
+  focusTrack = -1 # in clip song.clip; -1 = none
+  noTrack: Track # stands in for the focused track while there is none
+
+proc cur(): var Track =
+  if focusTrack >= 0:
+    result = song.clips[song.clip][focusTrack]
+  else:
+    result = noTrack
 
 proc rgb(r, g, b: int, a = 255): uint32 =
   uint32(r) or uint32(g) shl 8 or uint32(b) shl 16 or uint32(a) shl 24
@@ -85,9 +93,9 @@ proc transport() =
   let io = igGetIO()
   if igButton(if song.playing: "Pause" else: "Play", v2(60, 0)) or
       (igIsKeyPressed(ImGuiKey.Space, false) and not io.wantTextInput):
-    song.playing = not song.playing
+    song.playing = focusTrack >= 0 and not song.playing
   igSameLine()
-  if igButton("Stop", v2(60, 0)):
+  if igButton("Stop", v2(60, 0)) and focusTrack >= 0:
     song.playing = false
     song.pos = 0
   igSameLine()
@@ -276,7 +284,7 @@ proc pianoRoll() =
       scrollY -= io.mouseWheel * keyH * 3
     scrollX -= io.mouseWheelH * beatW
 
-  let beats = float32(song.loopEnd + 4 * BarTicks) / Ppq.float32
+  let beats = float32(song.clips[song.clip].loopEnd + 4 * BarTicks) / Ppq.float32
     # room to add past the end
   scrollbar("scrollX", false, v2(gridX, bottom), gridW, scrollX, beatW, beats, 256)
   scrollbar("scrollY", true, v2(right, sheetTop), paneH, scrollY, keyH, 128, 40)
@@ -288,55 +296,58 @@ proc pianoRoll() =
     else:
       -1
   if key != previewKey:
+    let ch = if cur().rhythm: Drums else: PreviewCh
     if previewKey >= 0: # note off
-      live.add (0x80, previewKey, 0)
-    if key >= 0: # note on
-      live.add (0x90, key, clamp(int((mouse.x - origin.x) / KeyW * 127), 1, 127))
+      live.add (0x80 or ch, previewKey, 0)
+    if key >= 0: # the track's sound, then note on
+      live.add (0xB0 or ch, 0, cur().bank)
+      live.add (0xC0 or ch, cur().program, 0)
+      live.add (0x90 or ch, key, clamp(int((mouse.x - origin.x) / KeyW * 127), 1, 127))
     previewKey = key
 
   let t = xTick(mouse.x)
   let p = yPitch(mouse.y)
   var hit = -1
-  for i in countdown(song.notes.high, 0):
-    let n = song.notes[i]
+  for i in countdown(cur().notes.high, 0):
+    let n = cur().notes[i]
     if n.pitch == p and t >= n.start and t < n.start + n.len:
       hit = i
       break
   let onEdge =
     hit >= 0 and
-    tickX(float(song.notes[hit].start + song.notes[hit].len)) - mouse.x < EdgeW
+    tickX(float(cur().notes[hit].start + cur().notes[hit].len)) - mouse.x < EdgeW
   if sheetHovered and (onEdge or drag == Resize):
     igSetMouseCursor(ImGuiMouseCursor.ResizeEW)
 
   if sheetHovered and igIsMouseClicked(ImGuiMouseButton.Left):
     if hit < 0:
-      song.notes.add Note(
+      cur().notes.add Note(
         start: max(0, snapDown(t, grid)), len: lastLen, pitch: p, vel: lastVel
       )
-      hit = song.notes.high
+      hit = cur().notes.high
     dragNote = hit
     drag = if onEdge: Resize else: Move
-    grabTicks = t - song.notes[hit].start
-    lastLen = song.notes[hit].len
-    lastVel = song.notes[hit].vel
+    grabTicks = t - cur().notes[hit].start
+    lastLen = cur().notes[hit].len
+    lastVel = cur().notes[hit].vel
   if not igIsMouseDown(ImGuiMouseButton.Left):
     drag = Idle
   case drag
   of Move:
-    song.notes[dragNote].start = max(0, snap(t - grabTicks, grid))
-    song.notes[dragNote].pitch = p
+    cur().notes[dragNote].start = max(0, snap(t - grabTicks, grid))
+    cur().notes[dragNote].pitch = p
   of Resize:
-    let n = song.notes[dragNote]
-    song.notes[dragNote].len = max(grid, snap(t, grid) - n.start)
-    lastLen = song.notes[dragNote].len
+    let n = cur().notes[dragNote]
+    cur().notes[dragNote].len = max(grid, snap(t, grid) - n.start)
+    lastLen = cur().notes[dragNote].len
   of Idle:
     if sheetHovered and igIsMouseDown(ImGuiMouseButton.Right) and hit >= 0:
-      song.notes.delete hit
+      cur().notes.delete hit
 
   # dragging in the velocity lane sets the notes whose bar is under the mouse
   if velHeld:
     let v = clamp(int((bottom - mouse.y) / velH * 127), 1, 127)
-    for n in song.notes.mitems:
+    for n in cur().notes.mitems:
       if abs(tickX(n.start.float) - mouse.x) <= 4:
         n.vel = v
         lastVel = v
@@ -345,7 +356,7 @@ proc pianoRoll() =
   if velHeld or velHovered:
     var shown = if velHeld: clamp(int((bottom - mouse.y) / velH * 127), 1, 127) else: 0
     if not velHeld:
-      for n in song.notes:
+      for n in cur().notes:
         if abs(tickX(n.start.float) - mouse.x) <= 4:
           shown = n.vel
           break
@@ -415,12 +426,12 @@ proc pianoRoll() =
     (if splitHot: rgb(110, 160, 255) else: rgb(90, 90, 90)),
     (if splitHot: 3 else: 2),
   )
-  let le = tickX(song.loopEnd.float)
+  let le = tickX(song.clips[song.clip].loopEnd.float)
   dl.addLine(v2(le, origin.y), v2(le, sheetTop), rgb(200, 120, 60), 3)
 
   # notes, then their velocities
   dl.pushClipRect(v2(gridX, sheetTop), v2(right, velTop), true)
-  for n in song.notes:
+  for n in cur().notes:
     let (x0, x1, y) =
       (tickX(n.start.float), tickX(float(n.start + n.len)), pitchY(n.pitch))
     let shade = 90 + n.vel
@@ -429,7 +440,7 @@ proc pianoRoll() =
     )
     dl.addRect(v2(x0, y + 1), v2(x1, y + keyH - 1), rgb(10, 30, 10), 2)
   dl.popClipRect()
-  for n in song.notes:
+  for n in cur().notes:
     let x0 = tickX(n.start.float)
     let vy = bottom - float32(n.vel) / 127 * velH
     dl.addLine(v2(x0, bottom), v2(x0, vy), rgb(110, 210, 110), 2)
@@ -444,8 +455,122 @@ var
   toggleClips = true
   firstFrame = true
 
+proc focus(clip, track: int) =
+  ## Moving focus stops playback; leaving a clip forgets its mutes and solos.
+  if clip != song.clip:
+    for t in song.clips[song.clip].mitems:
+      t.mute = false
+      t.solo = false
+  song.clip = clip
+  focusTrack = track
+  song.playing = false
+  song.pos = 0
+
 proc clips() =
-  discard
+  igText("Clip:")
+  igSameLine()
+  igSetNextItemWidth(100)
+  if igBeginCombo("##clip", cstring(&"Clip {song.clip + 1}")):
+    for i in song.clips.low .. song.clips.high:
+      if igSelectable(cstring(&"Clip {i + 1}"), i == song.clip):
+        focus(i, -1)
+    igEndCombo()
+  igSameLine()
+  if igButton("Add"):
+    song.clips.add newSeq[Track]()
+    focus(song.clips.high, -1)
+  igSameLine()
+  if igButton("Remove") and song.clips.len > 1:
+    let gone = song.clip
+    focus(gone, -1)
+    song.clips.delete gone
+    song.clip = min(gone, song.clips.high)
+  igSeparator()
+  if igBeginTable("tracks", 4, ImGuiTableFlags.SizingStretchProp):
+    igTableSetupColumn("", ImGuiTableColumnFlags.WidthFixed)
+    igTableSetupColumn("", ImGuiTableColumnFlags.WidthFixed)
+    igTableSetupColumn("", ImGuiTableColumnFlags.WidthStretch, 1)
+    igTableSetupColumn("", ImGuiTableColumnFlags.WidthStretch, 1)
+    let dl = igGetWindowDrawList()
+    let span = song.clips[song.clip].loopEnd.float32
+    for i in 0 ..< song.clips[song.clip].len:
+      igTableNextRow()
+      igPushID(int32(i))
+      template t(): untyped =
+        song.clips[song.clip][i]
+
+      discard igTableNextColumn()
+      if igButton("X"):
+        let f = focusTrack - ord(focusTrack > i) # tracks after the gone one shift down
+        focus(song.clip, if focusTrack == i: -1 else: f)
+        song.clips[song.clip].delete i
+        igPopID()
+        break
+      discard igTableNextColumn()
+      discard igCheckbox("M", addr t.mute)
+      discard igCheckbox("S", addr t.solo)
+      discard igTableNextColumn()
+      igSetNextItemWidth(-1)
+      if igBeginCombo(
+        "##prog",
+        cstring(
+          if t.rhythm:
+            &"Rhythm {t.program:03}"
+          else:
+            &"{t.bank:03}:{t.program:03} {GmNames[t.program]}"
+        ),
+      ):
+        for q, name in GmNames:
+          if igSelectable(cstring(&"{t.bank:03}:{q:03} {name}"), not t.rhythm and q == t.program):
+            t.program = q
+            t.rhythm = false
+        if igSelectable("Rhythm", t.rhythm):
+          t.rhythm = true
+          t.bank = 0
+        igEndCombo()
+      igSetNextItemWidth(70)
+      var bank = t.bank.int32
+      igBeginDisabled(t.rhythm)
+      if igInputInt("Bk#", addr bank):
+        t.bank = clamp(bank, 0, 127).int
+      igEndDisabled()
+      igSameLine()
+      igSetNextItemWidth(70)
+      var prog = t.program.int32
+      if igInputInt("P#", addr prog):
+        t.program = clamp(prog, 0, 127).int
+      discard igTableNextColumn()
+      # the preview: notes as tiny rectangles; clicking it focuses the track
+      let at = igGetCursorScreenPosNonUDT()
+      let size = v2(max(igGetContentRegionAvailNonUDT().x, 1), 56)
+      if igInvisibleButton("preview", size):
+        focus(song.clip, i)
+      let (x0, y0) = (at.x, at.y)
+      dl.addRectFilled(
+        v2(x0, y0),
+        v2(x0 + size.x, y0 + size.y),
+        if i == focusTrack:
+          rgb(60, 60, 90)
+        else:
+          rgb(0, 0, 0),
+      )
+      if t.notes.len > 0:
+        var (lo, hi) = (127, 0)
+        for n in t.notes:
+          lo = min(lo, n.pitch)
+          hi = max(hi, n.pitch)
+        let rowH = size.y / float32(hi - lo + 1)
+        for n in t.notes:
+          let y = y0 + float32(hi - n.pitch) * rowH
+          dl.addRectFilled(
+            v2(x0 + n.start.float32 / span * size.x, y),
+            v2(x0 + float32(n.start + n.len) / span * size.x, y + max(rowH, 1)),
+            rgb(110, 210, 110),
+          )
+      igPopID()
+    igEndTable()
+  if igButton("ADD"):
+    song.clips[song.clip].add Track()
 
 proc ui() =
   if igBeginMainMenuBar():
@@ -476,7 +601,9 @@ proc ui() =
     firstFrame = false
   if togglePianoRoll:
     if igBegin("Piano roll"):
+      igBeginDisabled(focusTrack < 0)
       pianoRoll()
+      igEndDisabled()
     igEnd()
   if toggleClips:
     if igBegin("Clips"):
@@ -490,7 +617,7 @@ proc main() =
     else:
       getAppDir() / "deps/slopgs/dist/gm.dls"
   )
-  slopgs.midi(0, 0xC0, 0, 0) # program 0, Acoustic Grand Piano
+  slopgs.gsReset()
   pcm = alsa.open(Rate, LatencyUs)
   initLock(lock)
   createThread(audio, audioLoop)
