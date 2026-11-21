@@ -1,6 +1,6 @@
 ## Standard MIDI File export (type 1): what `advance` would send to the synth, as played in the current mode.
 import std/[math, strutils]
-import roll
+import model, player
 
 const SampleRate = 48000 ## only sets the resolution `advance` is run at: far finer than a tick
 
@@ -23,15 +23,18 @@ proc toMidi*(song: Song): string =
   ## tempo; each channel with notes gets a track of its own.
   ## Settings the synth would not change (repeats, overwritten at once) and notes' running status are
   ## squeezed out; the result sounds the same.
-  var s = Song(clips: song.clips, clip: song.clip, placements: song.placements, songMode: song.songMode,
-               laneMute: song.laneMute, laneSolo: song.laneSolo, bpm: song.bpm, playing: true)
+  var s = song
+  s.playing = true
+  s.clipPos = 0
+  s.songPos = 0
+  var pl: Player
   let endTick = if s.songMode: s.songEnd else: s.clips[s.clip].loopEnd
   let fpt = SampleRate.float / (s.bpm / 60 * Ppq)
   let frames = max(1, round(endTick.float * fpt).int)
   # ponytail: one block for the whole song; its events are at integer ticks, so rounding back is exact
-  var msgs = s.advance(frames, SampleRate)
+  var msgs = pl.advance(s, frames, SampleRate)
   s.playing = false
-  var tail = s.advance(1, SampleRate) # releases what still sounds, at the end
+  var tail = pl.advance(s, 1, SampleRate) # releases what still sounds, at the end
   for m in tail.mitems:
     m.offset = frames
   msgs.add tail

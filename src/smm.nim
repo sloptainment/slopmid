@@ -3,7 +3,7 @@
 ##   note <start> <len> <pitch> <vel>                bend <t v> <t v> ...  (of the last note)
 ##   cc <curve> <t v> <t v> ...  (of the last track) place <clip> <lane> <start> <len> <offset>
 import std/[sequtils, strformat, strutils]
-import roll
+import model
 
 proc toSmm*(s: Song): string =
   result = &"bpm {s.bpm}\n"

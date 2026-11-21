@@ -8,7 +8,7 @@
 import std/[algorithm, locks, math, os, sequtils, strformat, strutils]
 import imgui
 import wrap/[alsa, filebrowser, gui, slopgs]
-import roll, gm, smf, smm
+import model, player, gm, smf, smm
 
 const
   KeyW = 56f32 # note-name column
@@ -43,6 +43,7 @@ const
 var
   lock: Lock
   song = Song(bpm: 120, clips: newSeq[Clip](1))
+  playback: Player
   live: seq[(int, int, int)] # key previews, played at the next block's top
   pcm: Pcm
   synth, previewSynth: Synth # separate engines: the song keeps all 16 channels
@@ -59,11 +60,11 @@ proc audioLoop() {.thread.} =
         for (status, d1, d2) in live:
           slopgs.midi(previewSynth, 0, status, d1, d2)
         live.setLen(0)
-        for m in song.advance(BlockFrames, Rate):
+        for m in playback.advance(song, BlockFrames, Rate):
           slopgs.midi(synth, m.offset, m.status, m.d1, m.d2)
         slopgs.render(synth, buf)
         slopgs.render(previewSynth, pbuf)
-        clicks = song.clicks
+        clicks = playback.clicks
       for f in 0 ..< BlockFrames:
         for (at, down) in clicks:
           if at == f:
@@ -154,19 +155,6 @@ proc fired(win: string, c: Cmd, key: ImGuiKey, ctrl = true): bool =
   (menuCmd == c and editor == win) or
     (igIsWindowFocused() and (io.keyCtrl or not ctrl) and igIsKeyPressed(key, false) and not io.wantTextInput)
 
-proc clipPos(): var float =
-  ## The piano roll's playhead, whichever mode is playing.
-  if song.songMode:
-    result = song.idlePos
-  else:
-    result = song.pos
-
-proc songPos(): var float =
-  if song.songMode:
-    result = song.pos
-  else:
-    result = song.idlePos
-
 proc cur(): var Track =
   if focusTrack >= 0:
     result = song.clips[song.clip].tracks[focusTrack]
@@ -221,8 +209,7 @@ proc transport() =
   for (name, mode) in [("Song", true), ("Clip", false)]:
     if igRadioButton(cstring(name), song.songMode == mode) and song.songMode != mode:
       song.songMode = mode
-      song.playing = false # `pos` means something else now
-      swap(song.pos, song.idlePos)
+      song.playing = false
     igSameLine()
 
 proc scrollbar(
@@ -324,11 +311,11 @@ iterator playLines(): float =
   ## Clip time of each playhead line in the current clip: one per playing placement in song mode.
   if song.songMode:
     for p in song.placements:
-      let c = p.clipTime(song.clips[p.clip].loopEnd, song.pos)
+      let c = p.clipTime(song.clips[p.clip].loopEnd, song.songPos)
       if p.clip == song.clip and c >= 0:
         yield c
   else:
-    yield song.pos
+    yield song.clipPos
 
 proc toolButtons(tool: var Tool, origin: ImVec2, bend = false) =
   ## The Draw and Select buttons in a window's top-left corner, and Bend if `bend`.
@@ -445,7 +432,7 @@ proc pianoRoll() =
     if sel.len > 0:
       noteClip = sel
   if notesOk and velMode == 0 and fired("Piano roll", Paste, ImGuiKey.V) and focusTrack >= 0 and noteClip.len > 0:
-    let d = snap(clipPos().int, grid) - noteClip.mapIt(it.start).min # the group's first note lands on the playhead
+    let d = snap(song.clipPos.int, grid) - noteClip.mapIt(it.start).min # the group's first note lands on the playhead
     for n in cur().notes.mitems:
       n.sel = false
     for n in noteClip:
@@ -479,7 +466,7 @@ proc pianoRoll() =
   igSetCursorScreenPos(v2(gridX, origin.y))
   discard igInvisibleButton("ruler", v2(gridW, RulerH))
   if igIsItemActive():
-    clipPos() = xTick(mouse.x).float
+    song.clipPos = xTick(mouse.x).float
 
   igSetCursorScreenPos(v2(origin.x, sheetTop))
   discard igInvisibleButton("keys", v2(KeyW, paneH))
@@ -801,7 +788,7 @@ proc pianoRoll() =
     if fired("Piano roll", Copy, ImGuiKey.C) and pts.anyIt(it.sel):
       ccClip = pts.filterIt(it.sel)
     if fired("Piano roll", Paste, ImGuiKey.V) and ccClip.len > 0:
-      let d = snap(clipPos().int, grid) - ccClip[0].t # the first point lands on the playhead
+      let d = snap(song.clipPos.int, grid) - ccClip[0].t # the first point lands on the playhead
       let moved = ccClip.mapIt((t: it.t + d, v: it.v, sel: true)).filterIt(it.t <= loopT)
       if moved.len > 0: # replaces the points the pasted span covers
         pts.keepItIf(it.t < moved[0].t or it.t > moved[^1].t)
@@ -1036,7 +1023,7 @@ proc pianoRoll() =
   for c in playLines():
     dl.addLine(v2(tickX(c), origin.y), v2(tickX(c), bottom), rgb(255, 255, 255, 180))
   if song.songMode: # the clip's own position, where Ctrl+V pastes
-    dl.addLine(v2(tickX(song.idlePos), origin.y), v2(tickX(song.idlePos), bottom), rgb(255, 255, 255, 80))
+    dl.addLine(v2(tickX(song.clipPos), origin.y), v2(tickX(song.clipPos), bottom), rgb(255, 255, 255, 80))
   dl.popClipRect()
 
 var
@@ -1064,7 +1051,7 @@ proc focus(clip, track: int) =
   focusTrack = track
   if not song.songMode: # the song plays on through clip changes
     song.playing = false
-    song.pos = 0
+    song.clipPos = 0
 
 proc clipLabel(i: int): string =
   if song.clips[i].name == "": &"Clip {i + 1}" else: song.clips[i].name
@@ -1247,7 +1234,7 @@ proc songPlaylist() =
   igSetCursorScreenPos(v2(gridX, origin.y))
   discard igInvisibleButton("ruler", v2(gridW, RulerH))
   if igIsItemActive():
-    songPos() = xTick(mouse.x).float
+    song.songPos = xTick(mouse.x).float
   igSetCursorScreenPos(v2(gridX, laneTop))
   discard igInvisibleButton(
     "grid",
@@ -1290,7 +1277,7 @@ proc songPlaylist() =
     if sel.len > 0:
       placeClip = sel
   if fired("Song", Paste, ImGuiKey.V) and placeClip.len > 0:
-    let d = snap(songPos().int, grid) - placeClip.mapIt(it.start).min # the group's first clip lands on the playhead
+    let d = snap(song.songPos.int, grid) - placeClip.mapIt(it.start).min # the group's first clip lands on the playhead
     let moved = placeClip.mapIt(Placement(clip: it.clip, lane: it.lane, start: it.start + d, len: it.len, offset: it.offset, sel: true))
     if moved.allIt(fits(-1, it)): # all or nothing: an overlap anywhere cancels the paste
       for p in song.placements.mitems:
@@ -1503,7 +1490,7 @@ proc songPlaylist() =
     dl.addRect(v2(bx0, by0), v2(bx1, by1), rgb(66, 150, 250))
   dl.popClipRect()
   dl.pushClipRect(v2(gridX, origin.y), v2(right, bottom), true)
-  dl.addLine(v2(tickX(songPos()), origin.y), v2(tickX(songPos()), bottom), rgb(255, 255, 255, if song.songMode: 180 else: 80))
+  dl.addLine(v2(tickX(song.songPos), origin.y), v2(tickX(song.songPos), bottom), rgb(255, 255, 255, if song.songMode: 180 else: 80))
   dl.popClipRect()
 
   # lane numbers and mute/solo, after the backgrounds
@@ -1609,8 +1596,8 @@ proc apply(s: Song) =
   song.bpm = s.bpm
   song.clip = 0
   song.playing = false
-  song.pos = 0
-  song.idlePos = 0
+  song.clipPos = 0
+  song.songPos = 0
   placeClip.setLen 0
   pSel = -1
   focusTrack = -1 # the old index may not exist in `s`; focus() reads cur()
