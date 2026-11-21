@@ -1,7 +1,7 @@
 ## The audio thread: renders the song and the key previews and mixes in the metronome.
 ## `lock` guards `song` (in `common`) and the queue of previews; the UI runs under it.
 import std/[atomics, locks, math]
-import wrap/[alsa, slopgs]
+import wrap/[sdlaudio, slopgs]
 import model, player, common
 
 const
@@ -19,7 +19,6 @@ var
   pcm: Pcm
   synth, previewSynth: Synth # separate engines: the song keeps all 16 channels
   audioThread: Thread[void]
-  dlsFile: string
   wavThread: Thread[(Song, string)]
   wavRunning: Atomic[bool]
   wavDone, wavTotal: Atomic[int] # frames rendered of all to render; total 0 until known
@@ -57,11 +56,10 @@ proc audioLoop() {.thread.} =
           buf[i] = clamp(buf[i].int + pbuf[i].int + c, int16.low.int, int16.high.int).int16
       pcm.write(buf)
 
-proc start*(dlsPath: string) =
-  dlsFile = dlsPath
-  synth = slopgs.open(dlsPath)
-  previewSynth = slopgs.open(dlsPath)
-  pcm = alsa.open(Rate, LatencyUs)
+proc start*() =
+  synth = slopgs.open()
+  previewSynth = slopgs.open()
+  pcm = sdlaudio.open(Rate, LatencyUs)
   initLock(lock)
   createThread(audioThread, audioLoop)
 
@@ -82,7 +80,7 @@ proc renderWav(song: Song): string =
   let frames = round(
     (if s.songMode: s.songEnd else: s.clips[s.clip].loopEnd).float * Rate / (s.bpm / 60 * Ppq)
   ).int
-  let synth = slopgs.open(dlsFile) # a fresh one, so nothing of the live song carries over
+  let synth = slopgs.open() # a fresh one, so nothing of the live song carries over
   defer: slopgs.close(synth)
   wavTotal.store frames + 2 * Rate
   var pl: Player

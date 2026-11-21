@@ -2,18 +2,19 @@
 ## raw MIDI and renders interleaved stereo int16 at `Rate`, `BlockFrames` at a
 ## time. Each `Synth` is an independent instance, so each has all 16 channels;
 ## not thread-safe per instance: the caller serializes every call on one.
-import std/os
+import std/strutils
 
-const engine = currentSourcePath.parentDir / ".." / ".." / "deps/slopgs/src/engine"
+const here = currentSourcePath.replace("\\", "/").rsplit('/', 1)[0] # `/` even for a Windows target on a Linux host
+const engine = here & "/../../deps/slopgs/src/engine"
 {.passC: "-I" & engine.}
-{.compile(engine / "dls.c", "-x c -std=c11").}
-{.compile(engine / "msgs.c", "-x c -std=c11").}
-{.compile(engine / "render.c", "-x c -std=c11").}
-{.compile(engine / "rt.c", "-x c -std=c11").}
-{.compile(engine / "smf.c", "-x c -std=c11").}
-{.compile(engine / "synth.c", "-x c -std=c11").}
-{.compile(engine / "tables.c", "-x c -std=c11").}
-{.compile(engine / "voice.c", "-x c -std=c11").}
+{.compile(engine & "/dls.c", "-x c -std=c11").}
+{.compile(engine & "/msgs.c", "-x c -std=c11").}
+{.compile(engine & "/render.c", "-x c -std=c11").}
+{.compile(engine & "/rt.c", "-x c -std=c11").}
+{.compile(engine & "/smf.c", "-x c -std=c11").}
+{.compile(engine & "/synth.c", "-x c -std=c11").}
+{.compile(engine & "/tables.c", "-x c -std=c11").}
+{.compile(engine & "/voice.c", "-x c -std=c11").}
 
 const
   Rate* = 22050 ## voice.h RENDER_RATE (RESAMPLE_FACTOR 1)
@@ -31,18 +32,19 @@ proc voice_set_event_offset(e: Synth, frames: uint32) {.importc, cdecl.}
 proc synth_sysex(e: Synth, buf: ptr uint8, len: uint32) {.importc, cdecl.}
 proc render_frames(e: Synth, output: ptr int16, frames: uint32) {.importc, cdecl.}
 
-# gm.dls is parsed in place, so it lives as long as the engines do; all share it.
-var dls: string
+# gm.dls is embedded in the binary: `-d:dlsPath=<file>` picks another. It is parsed in place,
+# so it lives as long as the engines do; all share it.
+const dlsPath {.strdefine.} = here & "/../../deps/slopgs/dist/gm.dls"
+const dlsData = staticRead(dlsPath)
+let dls = dlsData # a `let` so the engine has an address to parse in place
 
-proc open*(dlsPath: string): Synth =
-  ## A new engine on `dlsPath`, GS-reset (it ignores bank select, CC0/CC32,
+proc open*(): Synth =
+  ## A new engine on the embedded gm.dls, GS-reset (it ignores bank select, CC0/CC32,
   ## until that has run). Free it with `close`; the song's and preview's never are.
-  if dls.len == 0:
-    dls = readFile(dlsPath)
   let n = msgs_size(0)
   result = msgs_create(allocShared0(n), n)
-  if msgs_init(result, dls[0].addr, dls.len.uint32) != 0:
-    raise newException(IOError, dlsPath & " is not a usable gm.dls")
+  if msgs_init(result, dls[0].unsafeAddr, dls.len.uint32) != 0:
+    raise newException(IOError, "the embedded " & dlsPath & " is not a usable gm.dls")
   var msg = [0x41'u8, 0x10, 0x42, 0x12, 0x40, 0x00, 0x7F, 0x00, 0x41, 0xF7]
   synth_sysex(result, msg[0].addr, msg.len.uint32) # after the F0
 

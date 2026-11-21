@@ -1,4 +1,3 @@
 # restored by `atlas rep` from atlas.lock
 deps/imgui/
-deps/nimgl/
 deps/.cache/

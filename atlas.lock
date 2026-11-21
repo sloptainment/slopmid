@@ -5,19 +5,12 @@
       "url": "https://github.com/nimgl/imgui",
       "commit": "0151ce087d2e8f7e03aaa5b8358900b5ced9af4e",
       "version": ""
-    },
-    "nimgl": {
-      "dir": "$deps/nimgl",
-      "url": "https://github.com/nimgl/nimgl",
-      "commit": "309d6ed8164ad184ed5bbb171c9f3d9d1c11ff81",
-      "version": ""
     }
   },
   "nimcfg": [
     "############# begin Atlas config section ##########",
     "--noNimblePath",
     "--path:\"deps/imgui/src\"",
-    "--path:\"deps/nimgl/src\"",
     "############# end Atlas config section   ##########",
     ""
   ],
@@ -34,8 +27,6 @@
       "",
       "requires \"nim >= 2.2.10\"",
       "requires \"https://github.com/nimgl/imgui\"",
-      "",
-      "requires \"https://github.com/nimgl/nimgl\"",
       "",
       ""
     ]

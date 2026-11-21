@@ -9,5 +9,3 @@ backend       = "cpp"
 requires "nim >= 2.2.10"
 requires "https://github.com/nimgl/imgui"
 
-requires "https://github.com/nimgl/nimgl"
-

@@ -1,4 +1,4 @@
-import std/[locks, os, strformat]
+import std/[locks, strformat]
 import imgui
 import wrap/gui
 import model, common, audio, history, files, pianoroll, clipswin, songwin
@@ -140,12 +140,7 @@ proc ui() =
   menuCmd = None
 
 proc main() =
-  let dlsPath =
-    if paramCount() >= 1:
-      paramStr(1)
-    else:
-      getAppDir() / "deps/slopgs/dist/gm.dls"
-  audio.start(dlsPath)
+  audio.start()
   gui.open("slopmid", 1280, 800)
   var lastTitle = "slopmid"
   while gui.running():
