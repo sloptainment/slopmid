@@ -35,6 +35,7 @@ type
     ccRes*: int = 3 ## index into `CcSteps`; default 1/96
     rhythm*: bool ## plays on the drum channel
     mute*, solo*: bool ## transient, cleared when the clip changes
+    lockedchannel*: int = -1 ## The MIDI channel to fix this track to
 
   Clip* = object ## a named set of tracks; loops at `loopEnd`
     name*: string ## "" shows as "Clip N"

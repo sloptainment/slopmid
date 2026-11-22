@@ -21,6 +21,9 @@ type
     which: int ## the curve of a `cc`
     vals: array[4, int]
       ## the track's curves now (3: pitch bend): sent to the channel before a note; a `cc` sends `vals[which]`
+    chIsLocked: bool
+      ## whether the event is coming from
+      ## a track that's locked
 
   Msg* = tuple[offset, status, d1, d2: int]
     ## a MIDI message, `offset` frames into the block
@@ -126,7 +129,8 @@ proc advance*(pl: var Player, s: var Song, frames, rate: int): seq[Msg] =
   template releaseAll(si: int, at: float) =
     for ti, t in tracks(si):
       for n in t.notes:
-        evs.add Ev(offset: at.round.int, src: si, track: ti, pitch: n.pitch)
+        evs.add Ev(offset: at.round.int, src: si, track: ti, pitch: n.pitch,
+        chIsLocked: t.lockedchannel != -1 )
 
   if s.playing and s.songMode and s.pos >= s.songEnd.float:
     s.playing = false
@@ -219,6 +223,7 @@ proc advance*(pl: var Player, s: var Song, frames, rate: int): seq[Msg] =
                 cc: true,
                 which: c,
                 vals: vals,
+                chIsLocked: t.lockedchannel != -1
               )
         for n in t.notes:
           let (st, en) = (n.start.float, float(n.start + n.len))
@@ -236,6 +241,7 @@ proc advance*(pl: var Player, s: var Song, frames, rate: int): seq[Msg] =
                 t.ccAt(2, n.start),
                 t.bendAt(n.start),
               ],
+              chIsLocked: t.lockedchannel != -1
             )
           if en >= lo and en < hi:
             evs.add Ev(
@@ -243,6 +249,7 @@ proc advance*(pl: var Player, s: var Song, frames, rate: int): seq[Msg] =
               src: si,
               track: ti,
               pitch: n.pitch,
+              chIsLocked: t.lockedchannel != -1
             )
     if s.songMode:
       s.pos = b
@@ -270,7 +277,7 @@ proc advance*(pl: var Player, s: var Song, frames, rate: int): seq[Msg] =
       result.add (at, 0xE0 or ch, v and 127, v shr 7)
 
   # offs before ons at the same frame; offs only for what sounds
-  for e in evs.sortedByIt((it.offset, it.on)):
+  for e in evs.sortedByIt((it.offset, it.on, not it.chIsLocked)):
     let at = min(e.offset, frames - 1)
     if e.cc: # only a channel that sounds the track takes it
       for x in pl.sounding:
@@ -291,10 +298,13 @@ proc advance*(pl: var Player, s: var Song, frames, rate: int): seq[Msg] =
         sendBend(och, at, BendMid)
     if e.on:
       var ch = -1
-      for x in pl.sounding:
-        if x.src == e.src and x.track == e.track:
-          ch = x.ch
       let tr = tracks(e.src)[e.track]
+      if tr.lockedchannel != -1 and not tr.rhythm:
+        ch = tr.lockedchannel
+      else:
+        for x in pl.sounding:
+          if x.src == e.src and x.track == e.track:
+            ch = x.ch
       if ch < 0:
         if tr.rhythm:
           ch = RhythmCh[pl.extra] # all busy: share the last

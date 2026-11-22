@@ -10,7 +10,7 @@ proc toSmm*(s: Song): string =
   for clip in s.clips:
     result.add "clip" & (if clip.name == "": "" else: " " & clip.name) & "\n"
     for t in clip.tracks:
-      result.add &"track {t.bank} {t.program} {t.ccRes} {t.rhythm.int}\n"
+      result.add &"track {t.bank} {t.program} {t.ccRes} {t.rhythm.int} {t.lockedchannel.int}\n"
       for n in t.notes:
         result.add &"note {n.start} {n.len} {n.pitch} {n.vel}\n"
         if n.bend.len > 0:
@@ -51,10 +51,20 @@ proc fromSmm*(text: string): Song =
       result.clips.add Clip(name: (if line.len > 5: line[5 .. ^1] else: ""))
     of "track":
       let a = w[1 .. ^1].map(parseInt)
-      if a.len != 4 or result.clips.len == 0 or a[2] notin 0 .. 3:
+      # defaults to "not locked"
+      var whichLocked = -1
+      if a.len < 4 or result.clips.len == 0 or a[2] notin 0 .. 3:
         bad()
+      if a.len > 4:
+        if a[4] < -1:
+          bad()
+        elif a[4] > 15:
+          bad()
+        else:
+          whichLocked = a[4]
       result.clips[^1].tracks.add Track(
-        bank: a[0], program: a[1], ccRes: a[2], rhythm: a[3] != 0
+        bank: a[0], program: a[1], ccRes: a[2], rhythm: a[3] != 0,
+        lockedchannel: whichLocked
       )
     of "note":
       let a = w[1 .. ^1].map(parseInt)

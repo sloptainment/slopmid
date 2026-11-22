@@ -113,6 +113,9 @@ proc clipsWindow*() =
       var prog = t.program.int32
       if igInputInt("P#", addr prog):
         t.program = clamp(prog, 0, 127).int
+      var locked = t.lockedchannel.int32
+      if igInputInt("Lock", addr locked):
+        t.lockedchannel = clamp(locked, -1, 15).int
       discard igTableNextColumn()
       # the preview: notes as tiny rectangles; clicking it focuses the track
       let at = igGetCursorScreenPosNonUDT()
