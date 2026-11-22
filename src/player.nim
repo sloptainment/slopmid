@@ -593,4 +593,60 @@ when isMainModule:
   # +3, +6, +9 semitones of 24 = 9216, 10240, 11264; the wheel recentres by the note's end at tick 96
   doAssert bends.filterIt(it.status == 0xE0).mapIt(it.d2 * 128 + it.d1) ==
     @[9216, 10240, 11264, 8192], $bends
+  # lock: a locked track takes channel 0 from either row; the unlocked one takes the next free
+  for locks in [[0, -1], [-1, 0]]:
+    var k = Song(
+      bpm: 120,
+      playing: true,
+      clips: @[
+        Clip(tracks: @[Track(lockedchannel: locks[0]), Track(lockedchannel: locks[1])])
+      ],
+    )
+    var pk: Player
+    k.nt(0) = @[Note(start: 0, len: Ppq, pitch: 60, vel: 100)]
+    k.nt(1) = @[Note(start: 0, len: Ppq, pitch: 62, vel: 100)]
+    doAssert pk.advance(k, 1024, 22050).filterIt(it.status shr 4 == 9).mapIt(
+      (it.d1, it.status and 15)
+    ).sorted == (if locks[0] == 0: @[(60, 0), (62, 1)] else: @[(60, 1), (62, 0)])
+  # a locked track shares a channel with an unlocked one that already sounds on it
+  var kc = Song(
+    bpm: 120,
+    playing: true,
+    clips: @[Clip(tracks: @[Track(), Track(lockedchannel: 0)])],
+  )
+  var pkc: Player
+  kc.nt(0) = @[Note(start: 0, len: 2 * Ppq, pitch: 60, vel: 100)]
+  kc.nt(1) = @[Note(start: Ppq, len: Ppq, pitch: 62, vel: 100)]
+  var kcOn: seq[Msg]
+  for blk in 0 ..< 12: # past tick 96 = block 10
+    kcOn.add pkc.advance(kc, 1024, 22050).filterIt(it.status shr 4 == 9)
+  doAssert kcOn.mapIt((it.d1, it.status and 15)) == @[(60, 0), (62, 0)], $kcOn
+  # a drum track ignores its lock: its simultaneous hits stay on one drum channel
+  var kr = Song(
+    bpm: 120,
+    playing: true,
+    clips: @[Clip(tracks: @[Track(rhythm: true, lockedchannel: 3), Track(rhythm: true)])],
+  )
+  var pkr: Player
+  for t in 0 .. 1:
+    kr.nt(t) =
+      @[
+        Note(start: 0, len: Ppq, pitch: 36, vel: 100),
+        Note(start: 0, len: Ppq, pitch: 38, vel: 100),
+      ]
+  doAssert pkr.advance(kr, 1024, 22050).filterIt(it.status shr 4 == 9).mapIt(
+    it.status and 15
+  ) == @[9, 9, 15, 15]
+  # deleting a track whose note sounds releases it
+  var kd = Song(
+    bpm: 120,
+    playing: true,
+    clips: @[Clip(tracks: @[Track(lockedchannel: 2), Track()])],
+  )
+  var pkd: Player
+  kd.nt(0) = @[Note(start: 0, len: BarTicks, pitch: 60, vel: 100)]
+  kd.nt(1) = @[Note(start: 0, len: BarTicks, pitch: 64, vel: 100)]
+  discard pkd.advance(kd, 1024, 22050)
+  kd.clips[0].tracks.delete 1
+  doAssert pkd.advance(kd, 1024, 22050) == @[(0, 0x80, 64, 0).Msg]
   echo "player: ok"

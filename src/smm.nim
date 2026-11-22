@@ -106,7 +106,7 @@ when isMainModule:
   var s = Song(
     bpm: 97.5,
     clips: @[
-      Clip(name: "Intro one", tracks: @[Track(bank: 1, program: 5, ccRes: 2)]),
+      Clip(name: "Intro one", tracks: @[Track(bank: 1, program: 5, ccRes: 2, lockedchannel: 5)]),
       Clip(tracks: @[Track(rhythm: true)]),
     ],
     placements: @[Placement(clip: 1, lane: 3, start: 96, len: 384, offset: 48)],
@@ -126,6 +126,7 @@ when isMainModule:
   for bad in [
     "note 0 96 60 100", "clip\ntrack 0 0 3 0\nnote 0 96 200 100",
     "clip\nplace 1 0 0 96 0", "clip\nfoo", "", "clip\nbpm x",
+    "clip\ntrack 0 0 3 0 16", "clip\ntrack 0 0 3 0 -2",
   ]:
     var failed = false
     try:
@@ -133,4 +134,6 @@ when isMainModule:
     except ValueError:
       failed = true
     assert failed, bad
+  # a track line without a lock is unlocked
+  assert fromSmm("clip\ntrack 0 0 3 0").clips[0].tracks[0].lockedchannel == -1
   echo "smm ok"

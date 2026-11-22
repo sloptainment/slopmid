@@ -25,11 +25,12 @@ You write *clips*, which are loops made of *tracks*. Each track has one sound (a
 or a drum kit). Then you place clips on the 32 *lanes* of the *Song* window to build an
 arrangement.
 
-You never pick a MIDI channel. While the song plays, each track gets a channel only while one of
-its notes is sounding, and slopmid hands out the lowest free channel. One track can therefore
-share a channel with many others over a song, and more tracks than channels can exist as long as
-no more than 16 sound at the same moment. Drum tracks get the drum channel, plus extra drum parts
-when you need them. See *PLAYBACK AND CHANNEL ALLOCATION*.
+You don't have to pick a MIDI channel. While the song plays, each track gets a channel only while
+one of its notes is sounding, and slopmid hands out the lowest free channel. One track can
+therefore share a channel with many others over a song, and more tracks than channels can exist as
+long as no more than 16 sound at the same moment. Drum tracks get the drum channel, plus extra
+drum parts when you need them. If you do want a melodic track on one particular channel, you can
+lock it to that channel. See *PLAYBACK AND CHANNEL ALLOCATION*.
 
 The timing is fixed at 96 ticks per beat in 4/4 time.
 // src: src/model.nim:6-7
@@ -197,7 +198,7 @@ Position::
 `Rhy:a/b Mldy:c/d`::
   Channels in use right now: _a_ of the _b_ channels reserved for drums, and _c_ of the _d_
   melodic channels. _b_ + _d_ is always 16.
-// src: src/slopmid.nim:6-46, src/player.nim:77-85
+// src: src/slopmid.nim:6-46, src/player.nim:80-88
 
 === SNAP VALUES
 
@@ -261,12 +262,19 @@ Sound combo::
   drum tracks.
 *P#*::
   The program, from 0 to 127. On a drum track, this program number is sent on the drum channel.
+*Lock*::
+  A padlock button. An open padlock means the track is not locked. Click it to lock the track to
+  channel 0, and a channel field appears beside it. Click the padlock again to unlock the track; the
+  channel is forgotten. The field sets the channel from 0 to 15, with its *-* and *+* buttons or by
+  typing. It stops at 0 and 15 and never unlocks the track. Channels count from 0, so channel 10,
+  the GM drum channel, is 9. New tracks are unlocked. Greyed out on drum tracks, which ignore their
+  lock. See *Locked channels*.
 Preview strip::
   The track's notes drawn as small bars, with the playhead lines. Click the strip to focus the
   track in the piano roll. The focused track's strip is blue-grey.
 
-*ADD*, under the table, appends a new track: program 0, bank 0, melodic.
-// src: src/clipswin.nim, src/edit.nim:277-291, src/common.nim:124-143
+*ADD*, under the table, appends a new track: program 0, bank 0, melodic, not locked.
+// src: src/clipswin.nim, src/model.nim:38, src/edit.nim:277-291, src/common.nim:124-143
 
 == PIANO ROLL
 
@@ -336,7 +344,7 @@ overlapping notes separately, put them on separate tracks.
 
 Note: selecting the Bend tool gives every note of the focused track its two flat end points. That
 counts as an edit, so it marks the song as changed and adds an undo step.
-// src: src/model.nim:13-14, 83-127, src/edit.nim:88-142, src/pianoroll.nim:111-115, 211-290, 535-550
+// src: src/model.nim:13-14, 84-128, src/edit.nim:88-142, src/pianoroll.nim:111-115, 211-290, 535-550
 
 === Vel lane
 
@@ -366,7 +374,7 @@ first point's value before that point and the last point's value up to the loop 
 
 A curve with no points is drawn as a single point at its default value. Opening the lane adds that
 point to the track, which counts as an edit.
-// src: src/model.nim:11-15, 70-81, src/edit.nim:146-183, src/pianoroll.nim:364-422
+// src: src/model.nim:11-15, 71-82, src/edit.nim:146-183, src/pianoroll.nim:364-422
 
 === Navigating
 
@@ -416,7 +424,7 @@ Lane headers::
 
 Song mode plays from the song playhead to the end of the last placement, then stops and rewinds to
 the start.
-// src: src/songwin.nim, src/edit.nim:187-273, src/player.nim:117-119, 212-216
+// src: src/songwin.nim, src/edit.nim:187-273, src/player.nim:120-122, 216-220
 
 == EDIT COMMANDS
 
@@ -459,13 +467,14 @@ duplicate starts on the bar line instead.
 
 Each note asks for a channel when it starts:
 
-. If its track already has a note sounding, the note uses that track's channel.
+. If its track is locked to a channel (and is not a drum track), the note uses that channel.
+. Otherwise, if its track already has a note sounding, the note uses that track's channel.
 . Otherwise a melodic track takes the lowest free channel that isn't reserved for drums. A drum
   track takes the first free drum channel, or shares the last drum channel if all are busy.
 . If the channel last played a different bank or program, slopmid sends a bank select and program
   change first. It also sends the track's Vol, Exp and Pan values and its bend, if they differ
   from what the channel has.
-. When no channel is free, the note is dropped.
+. When no channel is free, the note is dropped. A locked note is never dropped.
 
 A channel becomes free when its last note ends.
 
@@ -477,16 +486,31 @@ RHYTHM PART* message. Each reserved channel leaves one fewer channel for melodic
 
 The reservation is fixed while playback runs, because the GS message cuts every sounding note. If
 you add a drum track during playback, it shares a drum channel until you pause and play again.
-// src: src/player.nim:6-7, 45-75, 96-131, 253-284
+// src: src/player.nim:6-7, 48-78, 99-135, 260-291, 299-333
+
+*Locked channels.* A lock overrides the rules above, and it is not exclusive. Any other track can
+use the locked channel while the locked track has no note sounding on it, and a locked note starts
+on its channel even when another track's note already sounds there. Then:
+
+* Both tracks play on that channel. A bank, program, curve or bend message that one track sends
+  applies to the other track's notes too, because these messages are per channel.
+* If both tracks play the same pitch, a note off from one can end the other's note, because a MIDI
+  note off names only a channel and a pitch.
+* An unlocked track skips a channel while a locked note sounds on it. When a locked and an unlocked
+  track start on the same tick, the locked one goes first, whatever the track order, so the
+  unlocked one takes the next free channel.
+* Locking a melodic track to channel 10 (9), or to a channel reserved as a drum part, makes it play
+  drum sounds.
+// src: src/model.nim:38, src/player.nim:24-26, 280, 299-308
 
 *Pitch bend.* The bend range of every channel is set to 24 semitones (RPN 0) the first time that
 channel bends. The wheel returns to centre when the channel's last note ends.
-// src: src/model.nim:13, src/player.nim:224-231, 251-252
+// src: src/model.nim:13, src/player.nim:229-236, 258-259
 
 *Curves.* A track's curves are sent only on the channels it is sounding on, at most once per
 resolution step and only when the value changes. A track sends a curve only if that curve has
 points.
-// src: src/player.nim:183-192, 236-245
+// src: src/player.nim:187-196, 241-251
 
 *Previews.* Clicked keys and dragged notes play on a second synth instance, so previews never take
 a channel from the song.
@@ -530,7 +554,9 @@ line, and each `track` line belongs to the most recent `clip` line.
 ----
 bpm <tempo>                              20 to 999
 clip [<name>]                            the rest of the line is the name
-track <bank> <program> <res> <rhythm>    res: 0..3 = 1/16, 1/32, 1/64, 1/96; rhythm: 0 or 1
+track <bank> <program> <res> <rhythm> [<lock>]
+                                         res: 0..3 = 1/16, 1/32, 1/64, 1/96; rhythm: 0 or 1;
+                                         lock: -1 or 0..15, -1 if left out
 note <start> <len> <pitch> <vel>         len > 0; pitch and vel 0..127
 bend <t> <v> <t> <v> ...                 the previous note's bend points; v in semitones
 cc <curve> <t> <v> ...                   curve: 0 vol, 1 exp, 2 pan
@@ -540,9 +566,10 @@ place <clip> <lane> <start> <len> <offset>   clip index from 0, lane 0..31
 In a `bend` record, the first pair is the note's start and the last pair is its end; their `t`
 values are ignored. The middle pairs count ticks from the note's start.
 
-A file with no `clip` line, with an unknown record, or with a placement of a clip that doesn't
-exist is rejected with a *File error*. Mutes, solos, selections and the layout are not saved.
-// src: src/smm.nim, src/model.nim:25
+A file with no `clip` line, with an unknown record, with a track lock outside -1 to 15, or with a
+placement of a clip that doesn't exist is rejected with a *File error*. Mutes, solos, selections
+and the layout are not saved.
+// src: src/smm.nim, src/model.nim:25, 38
 
 === MIDI export
 
@@ -577,6 +604,7 @@ window's clipboard.
 
 * 4/4 time only, and one tempo for the whole song.
 * 32 lanes. At most 16 tracks can sound at once, because each sounding track holds one channel.
+  Tracks locked to a channel can share it, so more than 16 can sound.
   Every reserved drum channel is a channel melodic tracks can't use. When every channel is busy,
   new notes on melodic tracks are dropped.
 * A clip's loop point is the end of the last bar that has a note, and a clip is at least one bar
@@ -588,7 +616,7 @@ window's clipboard.
   the song as changed.
 * slopmid has no MIDI input or output ports and no MIDI import. Sound comes only from the built-in
   slopgs synth.
-// src: src/model.nim:7-10, 63-68, src/wrap/gui.nim:65-66, 83-88, src/files.nim:65-67
+// src: src/model.nim:7-10, 64-69, src/wrap/gui.nim:65-66, 83-88, src/files.nim:65-67
 
 == BUILDING
 

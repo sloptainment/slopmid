@@ -113,9 +113,33 @@ proc clipsWindow*() =
       var prog = t.program.int32
       if igInputInt("P#", addr prog):
         t.program = clamp(prog, 0, 127).int
-      var locked = t.lockedchannel.int32
-      if igInputInt("Lock", addr locked):
-        t.lockedchannel = clamp(locked, -1, 15).int
+      igBeginDisabled(t.rhythm)
+      let side = igGetFrameHeight()
+      if igButton("##lock", v2(side, side)):
+        t.lockedchannel = if t.lockedchannel == -1: 0 else: -1
+      # the padlock: a solid body and a closed shackle when locked, an outline and an open one when not
+      let (b0, b1) = (igGetItemRectMinNonUDT(), igGetItemRectMaxNonUDT())
+      let (s, ink) = (b1.x - b0.x, rgb(255, 255, 255, if t.rhythm: 90 else: 255))
+      let (xl, xr, yTop, yBody) =
+        (b0.x + 0.35 * s, b1.x - 0.35 * s, b0.y + 0.25 * s, b0.y + 0.5 * s)
+      let (body0, body1) =
+        (v2(b0.x + 0.25 * s, yBody), v2(b1.x - 0.25 * s, b1.y - 0.2 * s))
+      dl.addLine(v2(xl, yBody), v2(xl, yTop), ink, 2)
+      dl.addLine(v2(xl, yTop), v2(xr, yTop), ink, 2)
+      if t.lockedchannel != -1:
+        dl.addLine(v2(xr, yTop), v2(xr, yBody), ink, 2)
+        dl.addRectFilled(body0, body1, ink)
+      else:
+        dl.addLine(v2(xr, yTop), v2(xr, b0.y + 0.36 * s), ink, 2)
+        dl.addRect(body0, body1, ink, 0, 2)
+      if t.lockedchannel != -1:
+        igSameLine()
+        igSetNextItemWidth(70)
+        var locked = t.lockedchannel.int32
+        if igInputInt("##channel", addr locked):
+          t.lockedchannel = clamp(locked, 0, 15).int
+            # the toggle unlocks; the field never does
+      igEndDisabled()
       discard igTableNextColumn()
       # the preview: notes as tiny rectangles; clicking it focuses the track
       let at = igGetCursorScreenPosNonUDT()
