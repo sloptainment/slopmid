@@ -50,10 +50,13 @@ proc audioLoop() {.thread.} =
             hz = if down: ClickDownHz else: ClickHz
         var c = 0
         if click < ClickLen: # a sine that fades out, so it ends without a pop
-          c = int(sin(2 * PI * hz * click.float / Rate) * (1 - click / ClickLen) * ClickAmp)
+          c = int(
+            sin(2 * PI * hz * click.float / Rate) * (1 - click / ClickLen) * ClickAmp
+          )
           inc click
         for i in [2 * f, 2 * f + 1]:
-          buf[i] = clamp(buf[i].int + pbuf[i].int + c, int16.low.int, int16.high.int).int16
+          buf[i] =
+            clamp(buf[i].int + pbuf[i].int + c, int16.low.int, int16.high.int).int16
       pcm.write(buf)
 
 proc start*() =
@@ -78,18 +81,28 @@ proc renderWav(song: Song): string =
   s.metronome = false
   s.pos = 0
   let frames = round(
-    (if s.songMode: s.songEnd else: s.clips[s.clip].loopEnd).float * Rate / (s.bpm / 60 * Ppq)
+    (if s.songMode: s.songEnd else: s.clips[s.clip].loopEnd).float * Rate /
+      (s.bpm / 60 * Ppq)
   ).int
   let synth = slopgs.open() # a fresh one, so nothing of the live song carries over
-  defer: slopgs.close(synth)
+  defer:
+    slopgs.close(synth)
   wavTotal.store frames + 2 * Rate
   var pl: Player
   var blk: Block
   var data: seq[int16]
-  var done = 0 # frames rendered; the last playing block is cut to end at `frames` exactly
+  var done = 0
+    # frames rendered; the last playing block is cut to end at `frames` exactly
   while done < frames + 2 * Rate:
     s.playing = done < frames
-    let msgs = pl.advance(s, if s.playing: min(BlockFrames, frames - done) else: BlockFrames, Rate)
+    let msgs = pl.advance(
+      s,
+      if s.playing:
+        min(BlockFrames, frames - done)
+      else:
+        BlockFrames,
+      Rate,
+    )
     for r in pl.rhythm:
       slopgs.sysex(synth, rhythmSysex(r.part, r.on))
     for m in msgs:
@@ -101,9 +114,11 @@ proc renderWav(song: Song): string =
   proc le(n, bytes: int): string =
     for i in 0 ..< bytes:
       result.add char((n shr (8 * i)) and 255)
+
   let size = data.len * 2
-  result = "RIFF" & le(36 + size, 4) & "WAVEfmt " & le(16, 4) & le(1, 2) & le(2, 2) & le(Rate, 4) &
-    le(Rate * 4, 4) & le(4, 2) & le(16, 2) & "data" & le(size, 4)
+  result =
+    "RIFF" & le(36 + size, 4) & "WAVEfmt " & le(16, 4) & le(1, 2) & le(2, 2) &
+    le(Rate, 4) & le(Rate * 4, 4) & le(4, 2) & le(16, 2) & "data" & le(size, 4)
   result.setLen 44 + size
   copyMem(result[44].addr, data[0].addr, size) # little-endian host
 
@@ -128,7 +143,10 @@ proc wavBusy*(): bool =
 
 proc wavProgress*(): float32 =
   let t = wavTotal.load
-  if t == 0: 0 else: min(1, wavDone.load / t)
+  if t == 0:
+    0
+  else:
+    min(1, wavDone.load / t)
 
 proc wavFinish*(): string =
   ## Once not `wavBusy`: joins the thread; the error, "" if it wrote the file.

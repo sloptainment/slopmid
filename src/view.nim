@@ -10,11 +10,14 @@ type
     scrollX*, scrollY*: float32
     rows*: int
     maxRowH*: float32
-    x*, rulerY*, top*, w*, h*: float32 # this frame's grid: left, ruler top, rows' top, width, rows' height
+    x*, rulerY*, top*, w*, h*: float32
+      # this frame's grid: left, ruler top, rows' top, width, rows' height
 
-  Box* = object ## a drag-a-rectangle selection: the anchor is in content coordinates, so it follows the scroll
+  Box* = object
+    ## a drag-a-rectangle selection: the anchor is in content coordinates, so it follows the scroll
     a: ImVec2
-    scrollsY: bool # false: the anchor's y is a screen y (the curve lane, which does not scroll rows)
+    scrollsY: bool
+      # false: the anchor's y is a screen y (the curve lane, which does not scroll rows)
 
   ScrollGrab = enum
     GrabBody
@@ -66,7 +69,9 @@ proc navigate*(v: var View, hovered, pan: bool, mouse: ImVec2, beats: float32) =
       let u = (mouse.x - v.x + v.scrollX) / v.beatW
       let t = (mouse.y - v.top + v.scrollY) / v.rowH
       v.beatW = clamp(v.beatW * exp(io.mouseDelta.x * 0.01), v.w / beats / 4, 1024)
-      v.rowH = clamp(v.rowH * exp(-io.mouseDelta.y * 0.01), v.h / v.rows.float32 / 4, v.maxRowH)
+      v.rowH = clamp(
+        v.rowH * exp(-io.mouseDelta.y * 0.01), v.h / v.rows.float32 / 4, v.maxRowH
+      )
       v.scrollX = u * v.beatW - (mouse.x - v.x)
       v.scrollY = t * v.rowH - (mouse.y - v.top)
     else:
@@ -173,7 +178,16 @@ proc scrollbar(
 proc scrollbars*(v: var View, beats, bottom: float32) =
   ## The time scrollbar under the grid at `bottom`, the row one on its right. Call after `navigate`.
   scrollbar("scrollX", false, v2(v.x, bottom), v.w, v.scrollX, v.beatW, beats, 1024)
-  scrollbar("scrollY", true, v2(v.x + v.w, v.top), v.h, v.scrollY, v.rowH, v.rows.float32, v.maxRowH)
+  scrollbar(
+    "scrollY",
+    true,
+    v2(v.x + v.w, v.top),
+    v.h,
+    v.scrollY,
+    v.rowH,
+    v.rows.float32,
+    v.maxRowH,
+  )
 
 proc ruler*(v: View, mouse: ImVec2): int =
   ## The ruler's button; the tick under the mouse while it is held, else -1.
@@ -198,17 +212,31 @@ proc drawGrid*(v: View, dl: ptr ImDrawList, minor: int, bottom: float32) =
         rgb(44, 48, 54)
     dl.addLine(v2(x, v.top), v2(x, bottom), col)
     if gt mod BarTicks == 0:
-      dl.addText(v2(x + 3, v.rulerY + 1), rgb(200, 200, 200), cstring($(gt div BarTicks + 1)))
+      dl.addText(
+        v2(x + 3, v.rulerY + 1), rgb(200, 200, 200), cstring($(gt div BarTicks + 1))
+      )
     gt += minor
 
 proc start*(b: var Box, v: View, mouse: ImVec2, scrollsY = true) =
   ## Anchors the box at the mouse.
   b.scrollsY = scrollsY
-  b.a = v2(mouse.x - v.x + v.scrollX, if scrollsY: mouse.y - v.top + v.scrollY else: mouse.y)
+  b.a = v2(
+    mouse.x - v.x + v.scrollX,
+    if scrollsY:
+      mouse.y - v.top + v.scrollY
+    else:
+      mouse.y,
+  )
 
 proc rect*(b: Box, v: View, mouse: ImVec2): tuple[x0, y0, x1, y1: float32] =
   ## The box in screen space, from its anchor to the mouse.
-  let (ax, ay) = (b.a.x + v.x - v.scrollX, if b.scrollsY: b.a.y + v.top - v.scrollY else: b.a.y)
+  let (ax, ay) = (
+    b.a.x + v.x - v.scrollX,
+    if b.scrollsY:
+      b.a.y + v.top - v.scrollY
+    else:
+      b.a.y,
+  )
   (min(ax, mouse.x), min(ay, mouse.y), max(ax, mouse.x), max(ay, mouse.y))
 
 proc draw*(b: Box, v: View, dl: ptr ImDrawList, mouse: ImVec2) =
@@ -220,7 +248,8 @@ when isMainModule:
   var v = View(beatW: 64, rowH: 14, scrollX: 128, scrollY: 100, rows: 128, maxRowH: 160)
   v.place(50, 10, 400, 300)
   doAssert v.top == 28 and v.tickX(0) == 50 - 128
-  doAssert v.xTick(v.tickX(960.0)) == 960 and v.xTick(-1e9) == 0 # an absent mouse parks at -FLT_MAX
+  doAssert v.xTick(v.tickX(960.0)) == 960 and v.xTick(-1e9) == 0
+    # an absent mouse parks at -FLT_MAX
   doAssert v.rowY(3) == 28 + 3 * 14 - 100
   doAssert v.yRow(v.rowY(7) + 1) == 7 and v.yRow(-1e9) == 0 and v.yRow(1e9) == 127
   v.scrollY = 1e6
@@ -233,8 +262,10 @@ when isMainModule:
   doAssert b.rect(v, v2(60, 40)) == (60f32, 40f32, 100f32, 60f32)
   v.scrollX = 0
   v.scrollY = 0
-  doAssert b.rect(v, v2(500, 500)) == (50f32 + 178, 28f32 + 132, 500f32, 500f32) # follows the scroll
+  doAssert b.rect(v, v2(500, 500)) == (50f32 + 178, 28f32 + 132, 500f32, 500f32)
+    # follows the scroll
   b.start(v, v2(100, 60), scrollsY = false)
   v.scrollY = 50
-  doAssert b.rect(v, v2(200, 100)) == (100f32, 60f32, 200f32, 100f32) # y stays on the screen
+  doAssert b.rect(v, v2(200, 100)) == (100f32, 60f32, 200f32, 100f32)
+    # y stays on the screen
   echo "view ok"

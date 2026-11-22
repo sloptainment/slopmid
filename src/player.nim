@@ -4,7 +4,8 @@ import std/[algorithm, math, sequtils]
 import model
 
 const
-  RhythmCh* = [Drums, 15, 14, 13, 12, 11, 10] ## channels rhythm tracks take, in order: the drums, then 16 down to 11
+  RhythmCh* = [Drums, 15, 14, 13, 12, 11, 10]
+    ## channels rhythm tracks take, in order: the drums, then 16 down to 11
   GsReset* = "\x41\x10\x42\x12\x40\x00\x7F\x00\x41\xF7" ## the SysEx after F0
 
 type
@@ -18,19 +19,27 @@ type
     pitch, vel: int
     cc: bool ## a curve message, not a note
     which: int ## the curve of a `cc`
-    vals: array[4, int] ## the track's curves now (3: pitch bend): sent to the channel before a note; a `cc` sends `vals[which]`
+    vals: array[4, int]
+      ## the track's curves now (3: pitch bend): sent to the channel before a note; a `cc` sends `vals[which]`
 
-  Msg* = tuple[offset, status, d1, d2: int] ## a MIDI message, `offset` frames into the block
+  Msg* = tuple[offset, status, d1, d2: int]
+    ## a MIDI message, `offset` frames into the block
 
   Player* = object ## what `advance` remembers between blocks
-    clicks*: seq[tuple[offset: int, downbeat: bool]] ## beats in the last `advance`d block, `offset` frames in
-    sounding: seq[tuple[src, track, pitch, ch: int]] ## src: index into the block's sources
+    clicks*: seq[tuple[offset: int, downbeat: bool]]
+      ## beats in the last `advance`d block, `offset` frames in
+    sounding: seq[tuple[src, track, pitch, ch: int]]
+      ## src: index into the block's sources
     sent: array[16, int] ## bank * 128 + program + 1 last sent per channel, 0 = none
-    sentCc: array[3, array[16, int]] ## value + 1 last sent per curve and channel, 0 = none
-    sentBend: array[16, int] ## bend last sent per channel, minus `BendMid`: 0 = centre or none
+    sentCc: array[3, array[16, int]]
+      ## value + 1 last sent per curve and channel, 0 = none
+    sentBend: array[16, int]
+      ## bend last sent per channel, minus `BendMid`: 0 = centre or none
     bendSet: array[16, bool] ## the channel has had its bend range set
-    rhythm*: seq[tuple[part: int, on: bool]] ## USE FOR RHYTHM PART changes for the last `advance`d block, to send before its messages
-    extra: int ## rhythm channels beyond `Drums` the synth has set: `RhythmCh[0 .. extra]`
+    rhythm*: seq[tuple[part: int, on: bool]]
+      ## USE FOR RHYTHM PART changes for the last `advance`d block, to send before its messages
+    extra: int
+      ## rhythm channels beyond `Drums` the synth has set: `RhythmCh[0 .. extra]`
     started: bool ## the last block was playing
 
 proc hasBend(t: Track): bool =
@@ -62,7 +71,8 @@ proc rhythmPeak(s: Song): int =
   ## while a note sounds. Song mode: the largest sum over overlapping audible placements.
   if not s.songMode:
     return s.clips[s.clip].rhythmCount
-  var edges: seq[tuple[tick, d: int]] ## a placement's end sorts before a start at the same tick
+  var edges: seq[tuple[tick, d: int]]
+    ## a placement's end sorts before a start at the same tick
   for p in s.placements:
     if s.laneAudible(p.lane):
       let n = s.clips[p.clip].rhythmCount
@@ -82,7 +92,10 @@ proc occupancy*(pl: Player): tuple[rhy, rhyMax, mel, melMax: int] =
   result.rhyMax = pl.extra + 1
   result.melMax = 16 - result.rhyMax
   for c in busy:
-    if c in RhythmCh[0 .. pl.extra]: inc result.rhy else: inc result.mel
+    if c in RhythmCh[0 .. pl.extra]:
+      inc result.rhy
+    else:
+      inc result.mel
 
 proc soundIdx(pl: Player, src, track, pitch: int): int =
   for i, x in pl.sounding:
@@ -106,6 +119,7 @@ proc advance*(pl: var Player, s: var Song, frames, rate: int): seq[Msg] =
   var srcs: seq[Src] # clip mode: one, endless
   template clipOf(si: int): untyped =
     s.clips[srcs[si].p.clip]
+
   template tracks(si: int): untyped =
     clipOf(si).tracks
 
@@ -141,8 +155,14 @@ proc advance*(pl: var Player, s: var Song, frames, rate: int): seq[Msg] =
     let b = a + frames.float / fpt
     # an edit, a mute or a truncation took the note out from under a sounding key
     for (si, ti, p, _) in pl.sounding:
-      let ok = si < srcs.len and srcs[si].audible and ti < tracks(si).len and tracks(si).audible(ti)
-      let c = if ok: srcs[si].p.clipTime(clipOf(si).loopEnd, a) else: -1.0
+      let ok =
+        si < srcs.len and srcs[si].audible and ti < tracks(si).len and
+        tracks(si).audible(ti)
+      let c =
+        if ok:
+          srcs[si].p.clipTime(clipOf(si).loopEnd, a)
+        else:
+          -1.0
       if c < 0 or not tracks(si)[ti].notes.anyIt(it.covers(p, c)):
         evs.add Ev(src: si, track: ti, pitch: p)
     # clip-time stretches of this block: (source, from, to, frame of `from`)
@@ -173,7 +193,9 @@ proc advance*(pl: var Player, s: var Song, frames, rate: int): seq[Msg] =
     if s.metronome:
       for (lo, hi, base) in clickSegs:
         for beat in ceil(lo / Ppq).int ..< ceil(hi / Ppq).int:
-          pl.clicks.add (round(base + ((beat * Ppq).float - lo) * fpt).int, beat mod 4 == 0)
+          pl.clicks.add (
+            round(base + ((beat * Ppq).float - lo) * fpt).int, beat mod 4 == 0
+          )
     for (si, lo, hi, base) in segs:
       if not srcs[si].audible:
         continue
@@ -185,10 +207,18 @@ proc advance*(pl: var Player, s: var Song, frames, rate: int): seq[Msg] =
             let step = CcSteps[t.ccRes]
             for k in ceil(lo / step.float).int ..< ceil(hi / step.float).int:
               var vals: array[4, int]
-              vals[c] = if c < 3: t.ccAt(c, k * step) else: t.bendAt(k * step)
+              vals[c] =
+                if c < 3:
+                  t.ccAt(c, k * step)
+                else:
+                  t.bendAt(k * step)
               evs.add Ev(
                 offset: round(base + (float(k * step) - lo) * fpt).int,
-                src: si, track: ti, cc: true, which: c, vals: vals,
+                src: si,
+                track: ti,
+                cc: true,
+                which: c,
+                vals: vals,
               )
         for n in t.notes:
           let (st, en) = (n.start.float, float(n.start + n.len))
@@ -200,7 +230,12 @@ proc advance*(pl: var Player, s: var Song, frames, rate: int): seq[Msg] =
               on: true,
               pitch: n.pitch,
               vel: n.vel,
-              vals: [t.ccAt(0, n.start), t.ccAt(1, n.start), t.ccAt(2, n.start), t.bendAt(n.start)],
+              vals: [
+                t.ccAt(0, n.start),
+                t.ccAt(1, n.start),
+                t.ccAt(2, n.start),
+                t.bendAt(n.start),
+              ],
             )
           if en >= lo and en < hi:
             evs.add Ev(
@@ -216,7 +251,11 @@ proc advance*(pl: var Player, s: var Song, frames, rate: int): seq[Msg] =
         s.pos = 0
     else:
       let lend = clipOf(0).loopEnd.float
-      s.pos = if b >= lend: b - lend else: b
+      s.pos =
+        if b >= lend:
+          b - lend
+        else:
+          b
   else:
     pl.started = false
     for (si, ti, p, _) in pl.sounding:
@@ -340,7 +379,11 @@ when isMainModule:
 
   # dispatch: tracks 0 and 1 sound together on channels 0 and 1, each after
   # its program change; track 2 (a later note) reuses channel 0
-  var d = Song(bpm: 120, playing: true, clips: @[Clip(tracks: @[Track(), Track(program: 5), Track(program: 7)])])
+  var d = Song(
+    bpm: 120,
+    playing: true,
+    clips: @[Clip(tracks: @[Track(), Track(program: 5), Track(program: 7)])],
+  )
   var pd: Player
   d.nt(0) = @[Note(start: 0, len: Ppq, pitch: 60, vel: 100)]
   d.nt(1) = @[Note(start: 0, len: Ppq, pitch: 62, vel: 100)]
@@ -350,8 +393,18 @@ when isMainModule:
     all.add pd.advance(d, 1024, 22050)
   doAssert all[0 ..< 12] ==
     @[
-      (0, 0xB0, 0, 0).Msg, (0, 0xC0, 0, 0), (0, 0xB0, 7, CcDefault[0]), (0, 0xB0, 11, CcDefault[1]), (0, 0xB0, 10, CcDefault[2]), (0, 0x90, 60, 100),
-      (0, 0xB1, 0, 0), (0, 0xC1, 5, 0), (0, 0xB1, 7, CcDefault[0]), (0, 0xB1, 11, CcDefault[1]), (0, 0xB1, 10, CcDefault[2]), (0, 0x91, 62, 100),
+      (0, 0xB0, 0, 0).Msg,
+      (0, 0xC0, 0, 0),
+      (0, 0xB0, 7, CcDefault[0]),
+      (0, 0xB0, 11, CcDefault[1]),
+      (0, 0xB0, 10, CcDefault[2]),
+      (0, 0x90, 60, 100),
+      (0, 0xB1, 0, 0),
+      (0, 0xC1, 5, 0),
+      (0, 0xB1, 7, CcDefault[0]),
+      (0, 0xB1, 11, CcDefault[1]),
+      (0, 0xB1, 10, CcDefault[2]),
+      (0, 0x91, 62, 100),
     ], $all
   # tick 192 = frame 22050 = block 21, offset 546: channel 0 is free again, program 7
   doAssert (0xC0, 7) in all.mapIt((it.status, it.d1)) and
@@ -360,28 +413,40 @@ when isMainModule:
   d.playing = true
   d.clipPos = 0
   d.clips[0].tracks[0].mute = true
-  doAssert pd.advance(d, 1024, 22050).keys.filterIt(it.status == 0x90).mapIt(it.d1) == @[62]
+  doAssert pd.advance(d, 1024, 22050).keys.filterIt(it.status == 0x90).mapIt(it.d1) ==
+    @[62]
   d.clips[0].tracks[0].mute = false
   d.clips[0].tracks[1].solo = true
   d.clipPos = 0
-  doAssert pd.advance(d, 1024, 22050).keys.filterIt(it.status == 0x90).mapIt(it.d1) == @[62]
+  doAssert pd.advance(d, 1024, 22050).keys.filterIt(it.status == 0x90).mapIt(it.d1) ==
+    @[62]
   # rhythm tracks take channel 10
-  var r = Song(bpm: 120, playing: true, clips: @[Clip(tracks: @[Track(rhythm: true, program: 8)])])
+  var r = Song(
+    bpm: 120, playing: true, clips: @[Clip(tracks: @[Track(rhythm: true, program: 8)])]
+  )
   var pr: Player
   r.nt = @[Note(start: 0, len: Ppq, pitch: 36, vel: 100)]
   doAssert pr.advance(r, 1024, 22050)[^1] == (0, 0x99, 36, 100).Msg
   # two rhythm tracks at once: the second takes channel 16, made a rhythm part (Part 15) at the start
-  var rr = Song(bpm: 120, playing: true, clips: @[Clip(tracks: @[Track(rhythm: true), Track(rhythm: true, program: 16)])])
+  var rr = Song(
+    bpm: 120,
+    playing: true,
+    clips: @[Clip(tracks: @[Track(rhythm: true), Track(rhythm: true, program: 16)])],
+  )
   var prr: Player
   for t in 0 .. 1:
     rr.clips[0].tracks[t].notes = @[Note(start: 0, len: Ppq, pitch: 36 + t, vel: 100)]
   let rm = prr.advance(rr, 1024, 22050)
-  doAssert prr.rhythm == @[(15, true)] and (0, 0x99, 36, 100).Msg in rm and (0, 0x9F, 37, 100).Msg in rm, $rm
+  doAssert prr.rhythm == @[(15, true)] and (0, 0x99, 36, 100).Msg in rm and
+    (0, 0x9F, 37, 100).Msg in rm, $rm
   doAssert rhythmSysex(15, true) == "\x41\x10\x42\x12\x40\x1F\x15\x01\x0B\xF7"
   # nothing flips while it plays: a third rhythm track added now shares the last channel
-  rr.clips[0].tracks.add Track(rhythm: true, notes: @[Note(start: 12, len: Ppq, pitch: 38, vel: 100)])
+  rr.clips[0].tracks.add Track(
+    rhythm: true, notes: @[Note(start: 12, len: Ppq, pitch: 38, vel: 100)]
+  )
   let rm3 = prr.advance(rr, 1024, 22050)
-  doAssert prr.rhythm.len == 0 and (rr.clips[0].tracks.len == 3) and 0x9F in rm3.mapIt(it.status), $rm3
+  doAssert prr.rhythm.len == 0 and (rr.clips[0].tracks.len == 3) and
+    0x9F in rm3.mapIt(it.status), $rm3
   # melodic tracks keep off both rhythm channels
   rr.clips[0].tracks.add Track(notes: @[Note(start: 24, len: Ppq, pitch: 60, vel: 100)])
   doAssert 0x90 in prr.advance(rr, 1024, 22050).mapIt(it.status)
@@ -399,32 +464,43 @@ when isMainModule:
   for t in 0 ..< 16:
     mx.clips[0].tracks[t].rhythm = t < 2
     mx.clips[0].tracks[t].notes = @[Note(start: 0, len: Ppq, pitch: 60 + t, vel: 100)]
-  let cx = pmx.advance(mx, 1024, 22050).filterIt(it.status shr 4 == 9).mapIt(it.status and 15)
+  let cx =
+    pmx.advance(mx, 1024, 22050).filterIt(it.status shr 4 == 9).mapIt(it.status and 15)
   doAssert cx.deduplicate.len == 16, $cx
   # 15 simultaneous melodic tracks fill every channel but the drums, including 15
   var m = Song(bpm: 120, playing: true, clips: @[Clip(tracks: newSeq[Track](16))])
   var pm: Player
   for t in 0 ..< 16:
     m.clips[0].tracks[t].notes = @[Note(start: 0, len: Ppq, pitch: 60 + t, vel: 100)]
-  let chs = pm.advance(m, 1024, 22050).keys.filterIt(it.status shr 4 == 9).mapIt(it.status and 15)
+  let chs = pm.advance(m, 1024, 22050).keys.filterIt(it.status shr 4 == 9).mapIt(
+      it.status and 15
+    )
   doAssert chs.len == 15 and 15 in chs and Drums notin chs, $chs
   # song mode: the clip placed twice back to back, the second truncated to a
   # beat; the song then stops. Tick 384 = frame 44100 = block 43, offset 68
-  var g = Song(bpm: 120, playing: true, songMode: true, clips: @[Clip(tracks: @[Track()])])
+  var g =
+    Song(bpm: 120, playing: true, songMode: true, clips: @[Clip(tracks: @[Track()])])
   var pg: Player
   g.clips[0].tracks[0].notes = @[Note(start: 0, len: BarTicks, pitch: 60, vel: 100)]
-  g.placements =
-    @[Placement(clip: 0, start: 0, len: BarTicks), Placement(clip: 0, lane: 1, start: BarTicks, len: Ppq)]
+  g.placements = @[
+    Placement(clip: 0, start: 0, len: BarTicks),
+    Placement(clip: 0, lane: 1, start: BarTicks, len: Ppq),
+  ]
   proc play(pl: var Player, s: var Song): seq[(int, Msg)] =
     for blk in 0 ..< 100:
       if s.playing:
         for m in pl.advance(s, 1024, 22050).keys:
           result.add (blk, m)
+
   # tick 480 = frame 55125 = block 53, offset 853
   let first = pg.play(g)
   doAssert first ==
-    @[(0, (0, 0x90, 60, 100).Msg), (43, (68, 0x80, 60, 0).Msg), (43, (68, 0x90, 60, 100).Msg),
-      (53, (853, 0x80, 60, 0).Msg)], $first
+    @[
+      (0, (0, 0x90, 60, 100).Msg),
+      (43, (68, 0x80, 60, 0).Msg),
+      (43, (68, 0x90, 60, 100).Msg),
+      (53, (853, 0x80, 60, 0).Msg),
+    ], $first
   doAssert not g.playing and g.songPos == 0
   # a muted lane is silent
   g.playing = true
@@ -444,32 +520,67 @@ when isMainModule:
   v.nt = @[Note(start: 0, len: BarTicks, pitch: 60, vel: 100)]
   var vols: seq[int]
   for blk in 0 ..< 40: # before the loop seam at block 43
-    vols.add pv.advance(v, 1024, 22050).filterIt(it.status == 0xB0 and it.d1 == 7).mapIt(it.d2)
-  doAssert vols == @[0, 32, 64, 95, 127], $vols # steps at ticks 0, 24, 48, 72, 96; none after
+    vols.add pv.advance(v, 1024, 22050).filterIt(it.status == 0xB0 and it.d1 == 7).mapIt(
+      it.d2
+    )
+  doAssert vols == @[0, 32, 64, 95, 127], $vols
+    # steps at ticks 0, 24, 48, 72, 96; none after
   # expression is its own curve on CC 11, independent of volume
-  v = Song(bpm: 120, playing: true, clips: @[Clip(tracks: @[Track(ccRes: 0, cc: [@[], @[(0, 127, false), (96, 0, false)], @[]])])])
+  v = Song(
+    bpm: 120,
+    playing: true,
+    clips: @[
+      Clip(
+        tracks: @[Track(ccRes: 0, cc: [@[], @[(0, 127, false), (96, 0, false)], @[]])]
+      )
+    ],
+  )
   pv = Player()
   v.nt = @[Note(start: 0, len: BarTicks, pitch: 60, vel: 100)]
   var exps: seq[int]
   for blk in 0 ..< 40:
-    exps.add pv.advance(v, 1024, 22050).filterIt(it.status == 0xB0 and it.d1 == 11).mapIt(it.d2)
+    exps.add pv
+      .advance(v, 1024, 22050)
+      .filterIt(it.status == 0xB0 and it.d1 == 11)
+      .mapIt(it.d2)
   doAssert exps == @[127, 95, 63, 32, 0], $exps
   # pan is the third curve, on CC 10
-  v = Song(bpm: 120, playing: true, clips: @[Clip(tracks: @[Track(ccRes: 0, cc: [@[], @[], @[(0, 0, false), (96, 127, false)]])])])
+  v = Song(
+    bpm: 120,
+    playing: true,
+    clips: @[
+      Clip(
+        tracks: @[Track(ccRes: 0, cc: [@[], @[], @[(0, 0, false), (96, 127, false)]])]
+      )
+    ],
+  )
   pv = Player()
   v.nt = @[Note(start: 0, len: BarTicks, pitch: 60, vel: 100)]
   var pans: seq[int]
   for blk in 0 ..< 40:
-    pans.add pv.advance(v, 1024, 22050).filterIt(it.status == 0xB0 and it.d1 == 10).mapIt(it.d2)
+    pans.add pv
+      .advance(v, 1024, 22050)
+      .filterIt(it.status == 0xB0 and it.d1 == 10)
+      .mapIt(it.d2)
   doAssert pans == @[0, 32, 64, 95, 127], $pans
   # bend: 0 -> +12 semitones over the first beat, one message per 1/16 (24 ticks) after the range is set to 24
   var bt = Song(bpm: 120, playing: true, clips: @[Clip(tracks: @[Track(ccRes: 0)])])
   var pb: Player
-  bt.nt = @[Note(start: 0, len: Ppq, pitch: 60, vel: 100, bend: @[(0, 0.0, false), (0, 12.0, false)])]
+  bt.nt = @[
+    Note(
+      start: 0,
+      len: Ppq,
+      pitch: 60,
+      vel: 100,
+      bend: @[(0, 0.0, false), (0, 12.0, false)],
+    )
+  ]
   var bends: seq[Msg]
   for blk in 0 ..< 40:
     bends.add pb.advance(bt, 1024, 22050)
-  doAssert bends.filterIt(it.status == 0xB0 and it.d1 in [100, 101, 6]).mapIt(it.d2) == @[0, 0, BendRange], $bends
+  doAssert bends.filterIt(it.status == 0xB0 and it.d1 in [100, 101, 6]).mapIt(it.d2) ==
+    @[0, 0, BendRange], $bends
   # +3, +6, +9 semitones of 24 = 9216, 10240, 11264; the wheel recentres by the note's end at tick 96
-  doAssert bends.filterIt(it.status == 0xE0).mapIt(it.d2 * 128 + it.d1) == @[9216, 10240, 11264, 8192], $bends
+  doAssert bends.filterIt(it.status == 0xE0).mapIt(it.d2 * 128 + it.d1) ==
+    @[9216, 10240, 11264, 8192], $bends
   echo "player: ok"

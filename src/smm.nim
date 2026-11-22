@@ -33,7 +33,10 @@ proc fromSmm*(text: string): Song =
   var line: string
   template bad() =
     raise newException(ValueError, "bad line: " & line)
-  template trk(): untyped = result.clips[^1].tracks[^1]
+
+  template trk(): untyped =
+    result.clips[^1].tracks[^1]
+
   for l in text.splitLines:
     line = l.strip
     let w = line.splitWhitespace
@@ -41,34 +44,46 @@ proc fromSmm*(text: string): Song =
       continue
     case w[0]
     of "bpm":
-      if w.len != 2: bad()
+      if w.len != 2:
+        bad()
       result.bpm = clamp(parseFloat(w[1]), 20, 999)
     of "clip":
       result.clips.add Clip(name: (if line.len > 5: line[5 .. ^1] else: ""))
     of "track":
       let a = w[1 .. ^1].map(parseInt)
-      if a.len != 4 or result.clips.len == 0 or a[2] notin 0 .. 3: bad()
-      result.clips[^1].tracks.add Track(bank: a[0], program: a[1], ccRes: a[2], rhythm: a[3] != 0)
+      if a.len != 4 or result.clips.len == 0 or a[2] notin 0 .. 3:
+        bad()
+      result.clips[^1].tracks.add Track(
+        bank: a[0], program: a[1], ccRes: a[2], rhythm: a[3] != 0
+      )
     of "note":
       let a = w[1 .. ^1].map(parseInt)
       if a.len != 4 or result.clips.len == 0 or result.clips[^1].tracks.len == 0 or
-          a[0] < 0 or a[1] <= 0 or a[2] notin 0 .. 127 or a[3] notin 0 .. 127: bad()
+          a[0] < 0 or a[1] <= 0 or a[2] notin 0 .. 127 or a[3] notin 0 .. 127:
+        bad()
       trk.notes.add Note(start: a[0], len: a[1], pitch: a[2], vel: a[3])
     of "bend":
-      if w.len < 5 or w.len mod 2 == 0 or result.clips.len == 0 or result.clips[^1].tracks.len == 0 or
-          trk.notes.len == 0: bad()
+      if w.len < 5 or w.len mod 2 == 0 or result.clips.len == 0 or
+          result.clips[^1].tracks.len == 0 or trk.notes.len == 0:
+        bad()
       for i in countup(1, w.high, 2):
         trk.notes[^1].bend.add (parseInt(w[i]), parseFloat(w[i + 1]), false)
     of "cc":
-      if w.len < 4 or w.len mod 2 != 0 or result.clips.len == 0 or result.clips[^1].tracks.len == 0: bad()
+      if w.len < 4 or w.len mod 2 != 0 or result.clips.len == 0 or
+          result.clips[^1].tracks.len == 0:
+        bad()
       let c = parseInt(w[1])
-      if c notin 0 .. 2: bad()
+      if c notin 0 .. 2:
+        bad()
       for i in countup(2, w.high, 2):
         trk.cc[c].add (parseInt(w[i]), parseInt(w[i + 1]), false)
     of "place":
       let a = w[1 .. ^1].map(parseInt)
-      if a.len != 5 or a[1] notin 0 ..< Lanes or a[3] <= 0: bad()
-      result.placements.add Placement(clip: a[0], lane: a[1], start: a[2], len: a[3], offset: a[4])
+      if a.len != 5 or a[1] notin 0 ..< Lanes or a[3] <= 0:
+        bad()
+      result.placements.add Placement(
+        clip: a[0], lane: a[1], start: a[2], len: a[3], offset: a[4]
+      )
     else:
       bad()
   if result.clips.len == 0:
@@ -78,18 +93,34 @@ proc fromSmm*(text: string): Song =
       raise newException(ValueError, &"placement of missing clip {p.clip}")
 
 when isMainModule:
-  var s = Song(bpm: 97.5, clips: @[Clip(name: "Intro one", tracks: @[Track(bank: 1, program: 5, ccRes: 2)]), Clip(tracks: @[Track(rhythm: true)])],
-               placements: @[Placement(clip: 1, lane: 3, start: 96, len: 384, offset: 48)])
-  s.clips[0].tracks[0].notes.add Note(start: 0, len: 96, pitch: 60, vel: 100,
-                               bend: @[(0, 0.0, false), (48, -1.25, false), (96, 0.0, false)])
+  var s = Song(
+    bpm: 97.5,
+    clips: @[
+      Clip(name: "Intro one", tracks: @[Track(bank: 1, program: 5, ccRes: 2)]),
+      Clip(tracks: @[Track(rhythm: true)]),
+    ],
+    placements: @[Placement(clip: 1, lane: 3, start: 96, len: 384, offset: 48)],
+  )
+  s.clips[0].tracks[0].notes.add Note(
+    start: 0,
+    len: 96,
+    pitch: 60,
+    vel: 100,
+    bend: @[(0, 0.0, false), (48, -1.25, false), (96, 0.0, false)],
+  )
   s.clips[0].tracks[0].cc[2].add (0, 10, false)
   s.clips[0].tracks[0].cc[2].add (384, 127, false)
   s.clips[1].tracks[0].notes.add Note(start: 48, len: 24, pitch: 36, vel: 110)
   let r = fromSmm(s.toSmm)
   assert r == s, s.toSmm
-  for bad in ["note 0 96 60 100", "clip\ntrack 0 0 3 0\nnote 0 96 200 100", "clip\nplace 1 0 0 96 0", "clip\nfoo", "", "clip\nbpm x"]:
+  for bad in [
+    "note 0 96 60 100", "clip\ntrack 0 0 3 0\nnote 0 96 200 100",
+    "clip\nplace 1 0 0 96 0", "clip\nfoo", "", "clip\nbpm x",
+  ]:
     var failed = false
-    try: discard fromSmm(bad)
-    except ValueError: failed = true
+    try:
+      discard fromSmm(bad)
+    except ValueError:
+      failed = true
     assert failed, bad
   echo "smm ok"

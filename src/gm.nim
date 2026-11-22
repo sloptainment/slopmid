@@ -14,9 +14,9 @@ const GmNames* = [
   "String Ensemble 2", "Synth Strings 1", "Synth Strings 2", "Choir Aahs", "Voice Oohs",
   "Synth Voice", "Orchestra Hit", "Trumpet", "Trombone", "Tuba", "Muted Trumpet",
   "French Horn", "Brass Section", "Synth Brass 1", "Synth Brass 2", "Soprano Sax",
-  "Alto Sax", "Tenor Sax", "Baritone Sax", "Oboe", "English Horn", "Bassoon", "Clarinet",
-  "Piccolo", "Flute", "Recorder", "Pan Flute", "Blown Bottle", "Shakuhachi", "Whistle",
-  "Ocarina", "Lead 1 (square)", "Lead 2 (sawtooth)", "Lead 3 (calliope)",
+  "Alto Sax", "Tenor Sax", "Baritone Sax", "Oboe", "English Horn", "Bassoon",
+  "Clarinet", "Piccolo", "Flute", "Recorder", "Pan Flute", "Blown Bottle", "Shakuhachi",
+  "Whistle", "Ocarina", "Lead 1 (square)", "Lead 2 (sawtooth)", "Lead 3 (calliope)",
   "Lead 4 (chiff)", "Lead 5 (charang)", "Lead 6 (voice)", "Lead 7 (fifths)",
   "Lead 8 (bass + lead)", "Pad 1 (new age)", "Pad 2 (warm)", "Pad 3 (polysynth)",
   "Pad 4 (choir)", "Pad 5 (bowed)", "Pad 6 (metallic)", "Pad 7 (halo)", "Pad 8 (sweep)",
@@ -27,7 +27,8 @@ const GmNames* = [
   "Reverse Cymbal", "Guitar Fret Noise", "Breath Noise", "Seashore", "Bird Tweet",
   "Telephone Ring", "Helicopter", "Applause", "Gunshot",
 ]
-static: doAssert GmNames.len == 128
+static:
+  doAssert GmNames.len == 128
 
 ## General MIDI percussion names for notes 35 .. 81, abbreviated to fit the key column.
 const DrumNames* = [
@@ -35,8 +36,9 @@ const DrumNames* = [
   "HiFlTom", "PdlHat", "LowTom", "OpHat", "LoMdTom", "HiMdTom", "Crash1", "HiTom",
   "Ride1", "China", "RideBel", "Tamb", "Splash", "Cowbell", "Crash2", "Vibslap",
   "Ride2", "HiBongo", "LoBongo", "MuHiCng", "OpHiCng", "LoConga", "HiTimb", "LoTimb",
-  "HiAgogo", "LoAgogo", "Cabasa", "Maracas", "ShWhstl", "LgWhstl", "ShGuiro",
-  "LgGuiro", "Claves", "HiWdBlk", "LoWdBlk", "MuCuica", "OpCuica", "MuTrngl", "OpTrngl",
+  "HiAgogo", "LoAgogo", "Cabasa", "Maracas", "ShWhstl", "LgWhstl", "ShGuiro", "LgGuiro",
+  "Claves", "HiWdBlk", "LoWdBlk", "MuCuica", "OpCuica", "MuTrngl", "OpTrngl",
 ]
 const DrumLow* = 35
-static: doAssert DrumNames.len == 47
+static:
+  doAssert DrumNames.len == 47

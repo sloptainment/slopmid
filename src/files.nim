@@ -21,7 +21,8 @@ var
   saved = capture() # the state at the last save, load or new
   savedBpm = song.bpm
   pending: Pending
-  openPrompt, openErr, wavPrompt: bool # popups are opened at the top level, not from inside a menu
+  openPrompt, openErr, wavPrompt: bool
+    # popups are opened at the top level, not from inside a menu
   fileErr: string
 
 proc markSaved() =

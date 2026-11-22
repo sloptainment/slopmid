@@ -51,4 +51,5 @@ proc write*(pcm: Pcm, frames: openArray[int16]) =
   # ponytail: polls every ms; a callback and a ring buffer would wake exactly
   while SDL_GetQueuedAudioSize(pcm.dev) > pcm.maxQueued:
     SDL_Delay(1)
-  check "SDL_QueueAudio", SDL_QueueAudio(pcm.dev, frames[0].unsafeAddr, uint32(frames.len * 2))
+  check "SDL_QueueAudio",
+    SDL_QueueAudio(pcm.dev, frames[0].unsafeAddr, uint32(frames.len * 2))

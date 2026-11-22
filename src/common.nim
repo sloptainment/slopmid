@@ -9,7 +9,8 @@ const
   HdrW* = 108f32 # lane numbers and mute/solo in the song window
   RulerH* = 18f32
   SbW* = 12f32 # scrollbar thickness
-  EdgeW* = 6f32 # grab zone at an edge: a scrollbar thumb's end (zooms), a note's right end (resizes)
+  EdgeW* = 6f32
+    # grab zone at an edge: a scrollbar thumb's end (zooms), a note's right end (resizes)
   Snaps* = [ # name, ticks, triplet (grid lines go to 1/3 of a beat)
     ("Bar", BarTicks, false),
     ("1/2", Ppq * 2, false),
@@ -34,9 +35,23 @@ type
     Bend ## the piano roll only
 
   Cmd* = enum
-    None, Undo, Redo, SelectAll, Duplicate, Copy, Cut, Paste, Quantize, Delete, SemiUp, SemiDown, OctUp, OctDown
+    None
+    Undo
+    Redo
+    SelectAll
+    Duplicate
+    Copy
+    Cut
+    Paste
+    Quantize
+    Delete
+    SemiUp
+    SemiDown
+    OctUp
+    OctDown
 
-  Editor* = enum ## the piano roll or song window, whichever had focus last: where the Edit menu acts
+  Editor* = enum
+    ## the piano roll or song window, whichever had focus last: where the Edit menu acts
     NoEditor
     RollEd
     SongEd
@@ -62,8 +77,10 @@ proc v2*(x, y: float32): ImVec2 =
 proc fired*(win: Editor, c: Cmd, key: ImGuiKey, ctrl = true): bool =
   ## `c` was picked in the Edit menu with `win` the last editor focused, or its shortcut was pressed in `win`.
   let io = igGetIO()
-  (menuCmd == c and editor == win) or
-    (igIsWindowFocused() and (io.keyCtrl or not ctrl) and igIsKeyPressed(key, false) and not io.wantTextInput)
+  (menuCmd == c and editor == win) or (
+    igIsWindowFocused() and (io.keyCtrl or not ctrl) and igIsKeyPressed(key, false) and
+    not io.wantTextInput
+  )
 
 proc focused*(): var Track =
   if focusTrack >= 0:
@@ -77,7 +94,10 @@ proc noteName*(p: int): string =
   Names[p mod 12] & $(p div 12 - 1)
 
 proc clipLabel*(i: int): string =
-  if song.clips[i].name == "": &"Clip {i + 1}" else: song.clips[i].name
+  if song.clips[i].name == "":
+    &"Clip {i + 1}"
+  else:
+    song.clips[i].name
 
 iterator playLines*(): float =
   ## Clip time of each playhead line in the current clip: one per playing placement in song mode.
@@ -92,7 +112,11 @@ iterator playLines*(): float =
 proc toolButtons*(tool: var Tool, origin: ImVec2, bend = false) =
   ## The Draw and Select buttons in a window's top-left corner, and Bend if `bend`.
   let dl = igGetWindowDrawList()
-  let ts = if bend: @[Draw, Select, Bend] else: @[Draw, Select]
+  let ts =
+    if bend:
+      @[Draw, Select, Bend]
+    else:
+      @[Draw, Select]
   let w = KeyW / ts.len.float32
   for i, t in ts:
     let a = v2(origin.x + i.float32 * w, origin.y)
@@ -102,7 +126,11 @@ proc toolButtons*(tool: var Tool, origin: ImVec2, bend = false) =
     if igIsItemHovered():
       igSetTooltip("%s", cstring($t))
     let c = v2(a.x + w / 2, a.y + RulerH / 2)
-    let col = if tool == t: rgb(255, 255, 255) else: rgb(130, 130, 140)
+    let col =
+      if tool == t:
+        rgb(255, 255, 255)
+      else:
+        rgb(130, 130, 140)
     if tool == t:
       dl.addRectFilled(a, v2(a.x + w, a.y + RulerH), rgb(66, 150, 250), 2)
     case t

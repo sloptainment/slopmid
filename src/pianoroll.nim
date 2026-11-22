@@ -17,7 +17,8 @@ type
     Resize
     Box ## a selection box
 
-  LaneMode = enum ## the velocity lane's combo; a curve mode's index in `Track.cc` is `ord - 1`
+  LaneMode = enum
+    ## the velocity lane's combo; a curve mode's index in `Track.cc` is `ord - 1`
     Vel
     Vol
     Exp
@@ -36,17 +37,20 @@ type
     grabbed, grabOff: int # the note dragged and where in it (ticks) it was grabbed
     velLine: seq[int] # notes whose velocity line was clicked, kept for the drag
     ptDrag: int # index of the curve point being dragged
-    bendNote: int # the note whose bend point is being dragged, and which point of its `bend`
+    bendNote: int
+      # the note whose bend point is being dragged, and which point of its `bend`
     bendPt: int
     bendBox: bool # a selection box of bend points is being dragged, from `box`
     previewKey: int
     noteClip: seq[Note] # Ctrl+C in the piano roll
     ccClip: seq[CurvePt] # Ctrl+C in a Vol/Exp/Pan lane
     laneFocus: bool # the last click was in the lane, not the sheet
-    ccCopied: bool # the last Ctrl+C took curve points: Ctrl+V pastes them only in a curve lane, and notes only elsewhere
+    ccCopied: bool
+      # the last Ctrl+C took curve points: Ctrl+V pastes them only in a curve lane, and notes only elsewhere
 
 var st = RollState(
-  view: View(beatW: 64, rowH: 14, scrollY: float32(127 - 84) * 14, rows: 128, maxRowH: 160),
+  view:
+    View(beatW: 64, rowH: 14, scrollY: float32(127 - 84) * 14, rows: 128, maxRowH: 160),
   lastLen: Ppq,
   lastVel: 100,
   velFrac: 0.25f32,
@@ -60,7 +64,6 @@ template curveIdx(): int =
 
 template curveFocus(): bool =
   st.laneFocus and st.laneMode != Vel # Ctrl+C/V act on curve points, else on notes
-
 
 proc pianoRollWindow*() =
   let io = igGetIO()
@@ -124,7 +127,8 @@ proc pianoRollWindow*() =
           n.bend[k].sel = all and n.bendVisible(k)
   if notesOk and fired(RollEd, Duplicate, ImGuiKey.D):
     focused().notes.duplicate(grid)
-  if igIsWindowHovered() and igIsMouseClicked(ImGuiMouseButton.Left) and mouse.y >= sheetTop and mouse.y < bottom:
+  if igIsWindowHovered() and igIsMouseClicked(ImGuiMouseButton.Left) and
+      mouse.y >= sheetTop and mouse.y < bottom:
     st.laneFocus = mouse.y >= velTop
   let cut = fired(RollEd, Cut, ImGuiKey.X)
   if notesOk and not curveFocus and (cut or fired(RollEd, Copy, ImGuiKey.C)):
@@ -134,14 +138,17 @@ proc pianoRollWindow*() =
       st.ccCopied = false
       if cut:
         focused().notes.keepItIf(not it.sel)
-  if notesOk and not curveFocus and not st.ccCopied and fired(RollEd, Paste, ImGuiKey.V) and focusTrack >= 0 and st.noteClip.len > 0:
-    focused().notes.pasteNotes(st.noteClip, snap(song.clipPos.int, grid)) # the group's first note lands on the playhead
+  if notesOk and not curveFocus and not st.ccCopied and fired(RollEd, Paste, ImGuiKey.V) and
+      focusTrack >= 0 and st.noteClip.len > 0:
+    focused().notes.pasteNotes(st.noteClip, snap(song.clipPos.int, grid))
+      # the group's first note lands on the playhead
   if notesOk and fired(RollEd, Quantize, ImGuiKey.Q):
     focused().notes.quantize(grid)
   var semis = 0 # semitones to transpose by
   if notesOk and editor == RollEd and menuCmd in SemiUp .. OctDown:
     semis = [1, -1, 12, -12][menuCmd.ord - SemiUp.ord]
-  elif notesOk and igIsWindowFocused() and (io.keyCtrl or io.keyShift) and not io.wantTextInput:
+  elif notesOk and igIsWindowFocused() and (io.keyCtrl or io.keyShift) and
+      not io.wantTextInput:
     let up = igIsKeyPressed(ImGuiKey.UpArrow, true)
     if up or igIsKeyPressed(ImGuiKey.DownArrow, true):
       semis = (if io.keyCtrl: 12 else: 1) * (if up: 1 else: -1)
@@ -191,7 +198,9 @@ proc pianoRollWindow*() =
 
   let beats = float32(song.clips[song.clip].loopEnd + 4 * BarTicks) / Ppq.float32
     # room to add past the end
-  st.view.navigate(keysHovered or sheetHovered or igIsItemHovered(), sheetPan, mouse, beats)
+  st.view.navigate(
+    keysHovered or sheetHovered or igIsItemHovered(), sheetPan, mouse, beats
+  )
   st.view.scrollbars(beats, bottom)
 
   let t = xTick(mouse.x)
@@ -212,10 +221,25 @@ proc pianoRollWindow*() =
   proc bendXY(n: Note, k: int): ImVec2 =
     # the end points sit inside the note, so a note's end and the next one's start read as two points (o-oo-o)
     let inset = min(7f32, (tickX(float(n.start + n.len)) - tickX(n.start.float)) / 4)
-    let ex = if k == 0: inset elif k == n.bend.high: -inset else: 0f32
-    v2(tickX(float(n.start + n.bendTick(k))) + ex, pitchY(n.pitch) + st.view.rowH / 2 - float32(n.bend[k].v) * st.view.rowH)
+    let ex =
+      if k == 0:
+        inset
+      elif k == n.bend.high:
+        -inset
+      else:
+        0f32
+    v2(
+      tickX(float(n.start + n.bendTick(k))) + ex,
+      pitchY(n.pitch) + st.view.rowH / 2 - float32(n.bend[k].v) * st.view.rowH,
+    )
+
   proc bendVal(n: Note): float = # the mouse's height as semitones from `n`
-    clamp(float((pitchY(n.pitch) + st.view.rowH / 2 - mouse.y) / st.view.rowH), -BendRange.float, BendRange.float)
+    clamp(
+      float((pitchY(n.pitch) + st.view.rowH / 2 - mouse.y) / st.view.rowH),
+      -BendRange.float,
+      BendRange.float,
+    )
+
   proc bendHit(): tuple[note, pt: int] = # the point under the mouse
     result = (-1, -1)
     for i in countdown(focused().notes.high, 0):
@@ -224,6 +248,7 @@ proc pianoRollWindow*() =
         let q = bendXY(n, k)
         if abs(q.x - mouse.x) <= 6 and abs(q.y - mouse.y) <= 6:
           return (i, k)
+
   proc bendLine(): int = # the note whose bend line, else body, is under the mouse
     for i in countdown(focused().notes.high, 0):
       let n = focused().notes[i]
@@ -232,16 +257,23 @@ proc pianoRollWindow*() =
         let (a, b) = (bendXY(n, ks[j - 1]), bendXY(n, ks[j]))
         let (dx, dy) = (b.x - a.x, b.y - a.y)
         let l2 = dx * dx + dy * dy
-        let u = if l2 == 0: 0f32 else: clamp(((mouse.x - a.x) * dx + (mouse.y - a.y) * dy) / l2, 0, 1)
+        let u =
+          if l2 == 0:
+            0f32
+          else:
+            clamp(((mouse.x - a.x) * dx + (mouse.y - a.y) * dy) / l2, 0, 1)
         let (ex, ey) = (mouse.x - a.x - u * dx, mouse.y - a.y - u * dy)
         if ex * ex + ey * ey <= 36:
           return i
     hit
-  proc addBend(i: int, v: float) = # a point at the snapped tick, or that tick's own point, set to `v`
+
+  proc addBend(i: int, v: float) =
+    # a point at the snapped tick, or that tick's own point, set to `v`
     let k = focused().notes[i].addBendPt(snap(xTick(mouse.x), grid), v)
     if k >= 0:
       st.bendNote = i
       st.bendPt = k
+
   if not notesOk:
     if sheetHovered and igIsMouseClicked(ImGuiMouseButton.Left):
       let (hi, hk) = bendHit()
@@ -250,7 +282,8 @@ proc pianoRollWindow*() =
       if hi >= 0:
         st.bendNote = hi
         st.bendPt = hk
-        if io.keyCtrl: # on the note's own pitch; a selected point takes its whole selection along
+        if io.keyCtrl:
+          # on the note's own pitch; a selected point takes its whole selection along
           focused().notes.zeroBendPts(hi, hk)
           st.bendNote = -1
         elif not focused().notes[hi].bend[hk].sel: # a selected point keeps the group
@@ -260,7 +293,13 @@ proc pianoRollWindow*() =
                 q.sel = false
           focused().notes[hi].bend[hk].sel = true
       elif ln >= 0:
-        addBend(ln, if io.keyCtrl: 0.0 else: bendVal(focused().notes[ln]))
+        addBend(
+          ln,
+          if io.keyCtrl:
+            0.0
+          else:
+            bendVal(focused().notes[ln]),
+        )
         if io.keyCtrl:
           st.bendNote = -1
       else:
@@ -282,9 +321,13 @@ proc pianoRollWindow*() =
       # the dragged point, or its whole selection, moves by the same ticks and semitones
       let bn = focused().notes[st.bendNote]
       focused().notes.moveBendPts(
-        st.bendNote, st.bendPt, snap(xTick(mouse.x), grid) - bn.start - bn.bend[st.bendPt].t, bendVal(bn) - bn.bend[st.bendPt].v
+        st.bendNote,
+        st.bendPt,
+        snap(xTick(mouse.x), grid) - bn.start - bn.bend[st.bendPt].t,
+        bendVal(bn) - bn.bend[st.bendPt].v,
       )
-    elif sheetHovered and igIsMouseDown(ImGuiMouseButton.Right): # dragging deletes; not the ends
+    elif sheetHovered and igIsMouseDown(ImGuiMouseButton.Right):
+      # dragging deletes; not the ends
       let (hi, hk) = bendHit()
       if hi >= 0 and hk > 0 and hk < focused().notes[hi].bend.high:
         focused().notes[hi].bend.delete hk
@@ -312,16 +355,20 @@ proc pianoRollWindow*() =
   if not igIsMouseDown(ImGuiMouseButton.Left):
     if st.drag == Box:
       let (bx0, by0, bx1, by1) = st.box.rect(st.view, mouse)
-      focused().notes.boxSelect(io.keyShift, proc(n: Note): bool =
-        tickX(n.start.float) <= bx1 and tickX(float(n.start + n.len)) >= bx0 and
-          pitchY(n.pitch) <= by1 and pitchY(n.pitch) + st.view.rowH >= by0
+      focused().notes.boxSelect(
+        io.keyShift,
+        proc(n: Note): bool =
+          tickX(n.start.float) <= bx1 and tickX(float(n.start + n.len)) >= bx0 and
+            pitchY(n.pitch) <= by1 and pitchY(n.pitch) + st.view.rowH >= by0,
       )
     st.drag = Idle
   case st.drag
   of Move:
     # the dragged note, or its whole selection, moves by the same ticks and pitches
     let n = focused().notes[st.grabbed]
-    focused().notes.moveNotes(st.grabbed, snap(t - st.grabOff, grid) - n.start, p - n.pitch)
+    focused().notes.moveNotes(
+      st.grabbed, snap(t - st.grabOff, grid) - n.start, p - n.pitch
+    )
   of Box:
     discard
   of Resize:
@@ -335,7 +382,8 @@ proc pianoRollWindow*() =
         focused().notes.keepItIf(not it.sel)
       else: # the selected middle points
         focused().notes.deleteBendPts
-    elif st.tool == Draw and sheetHovered and igIsMouseDown(ImGuiMouseButton.Right) and hit >= 0:
+    elif st.tool == Draw and sheetHovered and igIsMouseDown(ImGuiMouseButton.Right) and
+        hit >= 0:
       focused().notes.delete hit
 
   # clicking a key or placing/moving a note plays it; dragging across pitches glides
@@ -361,15 +409,20 @@ proc pianoRollWindow*() =
   let onLine = proc(n: Note): bool = # the faint line across the note's length
     mouse.x >= tickX(n.start.float) and mouse.x <= tickX(float(n.start + n.len)) and
       abs(bottom - float32(n.vel) / 127 * valH - mouse.y) <= 4
-  template pts(): untyped = focused().cc[curveIdx()] # the curve shown, in a curve mode
+  template pts(): untyped =
+    focused().cc[curveIdx()] # the curve shown, in a curve mode
+
   let volHit = proc(): int = # the curve point under the mouse
     result = -1
     for i, p in pts:
-      if abs(tickX(p.t.float) - mouse.x) <= 6 and abs(bottom - float32(p.v) / 127 * valH - mouse.y) <= 6:
+      if abs(tickX(p.t.float) - mouse.x) <= 6 and
+          abs(bottom - float32(p.v) / 127 * valH - mouse.y) <= 6:
         return i
-  let volVal = proc(): int = clamp(int((bottom - mouse.y) / valH * 127), 0, 127)
+  let volVal = proc(): int =
+    clamp(int((bottom - mouse.y) / valH * 127), 0, 127)
   let loopT = song.clips[song.clip].loopEnd
-  let addPt = proc(v: int) = # a point at the snapped tick, or that tick's own point, set to `v`
+  let addPt = proc(v: int) =
+    # a point at the snapped tick, or that tick's own point, set to `v`
     st.ptDrag = pts.addCurvePt(snap(xTick(mouse.x), grid), v, loopT)
   let onCurve = proc(): bool = # the drawn curve under the mouse
     let t = xTick(mouse.x)
@@ -385,14 +438,17 @@ proc pianoRollWindow*() =
       st.ccCopied = true
       if cut:
         pts.keepItIf(not it.sel)
-    if curveFocus and st.ccCopied and fired(RollEd, Paste, ImGuiKey.V) and st.ccClip.len > 0:
-      pts.pasteCurve(st.ccClip, snap(song.clipPos.int, grid), loopT) # the first point lands on the playhead
+    if curveFocus and st.ccCopied and fired(RollEd, Paste, ImGuiKey.V) and
+        st.ccClip.len > 0:
+      pts.pasteCurve(st.ccClip, snap(song.clipPos.int, grid), loopT)
+        # the first point lands on the playhead
   if st.laneMode != Vel:
     if pts.len == 0: # the default, as a point at the start
       pts.add (0, CcDefault[curveIdx()], false)
     if velDown:
       st.ptDrag = volHit()
-      if st.laneMode == Pan and io.keyCtrl and (st.ptDrag >= 0 or onCurve()): # Pan: Ctrl+click centres a point, or adds one at centre
+      if st.laneMode == Pan and io.keyCtrl and (st.ptDrag >= 0 or onCurve()):
+        # Pan: Ctrl+click centres a point, or adds one at centre
         if st.ptDrag >= 0:
           pts[st.ptDrag].v = CcDefault[2]
         else:
@@ -405,18 +461,26 @@ proc pianoRollWindow*() =
           st.ptBox.start(st.view, mouse, scrollsY = false)
       elif st.ptDrag < 0: # a click on empty space adds a point, at the snap
         addPt(volVal())
-    if st.tool == Select and st.ptDrag == -1 and velUp: # a box ends: the points in it get selected
+    if st.tool == Select and st.ptDrag == -1 and velUp:
+      # a box ends: the points in it get selected
       let (bx0, by0, bx1, by1) = st.ptBox.rect(st.view, mouse)
-      pts.boxSelect(io.keyShift, proc(p: CurvePt): bool =
-        let (x, y) = (tickX(p.t.float), bottom - float32(p.v) / 127 * valH)
-        x >= bx0 and x <= bx1 and y >= by0 and y <= by1
+      pts.boxSelect(
+        io.keyShift,
+        proc(p: CurvePt): bool =
+          let (x, y) = (tickX(p.t.float), bottom - float32(p.v) / 127 * valH)
+          x >= bx0 and x <= bx1 and y >= by0 and y <= by1,
       )
     if velHeld and st.ptDrag in 0 ..< pts.len:
       # the dragged point, or in Select its whole selection, moves by the same ticks and values
       pts.moveCurvePts(
-        st.ptDrag, st.tool == Select, clamp(snap(xTick(mouse.x), grid), 0, loopT) - pts[st.ptDrag].t, volVal() - pts[st.ptDrag].v, loopT
+        st.ptDrag,
+        st.tool == Select,
+        clamp(snap(xTick(mouse.x), grid), 0, loopT) - pts[st.ptDrag].t,
+        volVal() - pts[st.ptDrag].v,
+        loopT,
       )
-    if velHovered and igIsMouseDown(ImGuiMouseButton.Right): # dragging deletes; the last point stays
+    if velHovered and igIsMouseDown(ImGuiMouseButton.Right):
+      # dragging deletes; the last point stays
       let h = volHit()
       if h >= 0 and pts.len > 1:
         pts.delete h
@@ -429,7 +493,8 @@ proc pianoRollWindow*() =
     let v = clamp(int((bottom - mouse.y) / valH * 127), 1, 127)
     let anySel = focused().notes.anyIt(it.sel)
     for i, n in focused().notes.mpairs:
-      if (n.sel or not anySel) and (abs(tickX(n.start.float) - mouse.x) <= 4 or i in st.velLine):
+      if (n.sel or not anySel) and
+          (abs(tickX(n.start.float) - mouse.x) <= 4 or i in st.velLine):
         n.vel = v
         st.lastVel = v
 
@@ -446,7 +511,11 @@ proc pianoRollWindow*() =
       else:
         fmt"{v} - {int(round((v - 64) / 63 * 100))}% R"
     if st.laneMode != Vel:
-      let h = if velHeld: st.ptDrag else: volHit()
+      let h =
+        if velHeld:
+          st.ptDrag
+        else:
+          volHit()
       if h in 0 ..< pts.len:
         lines.add line(pts[h].v)
     elif velHeld:
@@ -454,7 +523,8 @@ proc pianoRollWindow*() =
     else:
       let anySel = focused().notes.anyIt(it.sel)
       for n in focused().notes:
-        if (n.sel or not anySel) and (abs(tickX(n.start.float) - mouse.x) <= 4 or onLine(n)):
+        if (n.sel or not anySel) and
+            (abs(tickX(n.start.float) - mouse.x) <= 4 or onLine(n)):
           lines.add noteName(n.pitch) & ": " & line(n.vel)
     if lines.len > 0:
       igSetTooltip("%s", cstring(lines.join("\n")))
@@ -499,7 +569,14 @@ proc pianoRollWindow*() =
   dl.pushClipRect(v2(gridX, origin.y), v2(right, bottom), true)
   dl.addRectFilled(v2(gridX, origin.y), v2(right, sheetTop), rgb(30, 30, 30))
   dl.addRectFilled(v2(gridX, velTop), v2(right, bottom), rgb(34, 36, 40))
-  st.view.drawGrid(dl, if Snaps[snapIdx][2]: Ppq div 3 else: Ppq div 4, bottom)
+  st.view.drawGrid(
+    dl,
+    if Snaps[snapIdx][2]:
+      Ppq div 3
+    else:
+      Ppq div 4,
+    bottom,
+  )
   dl.addLine(
     v2(gridX, velTop),
     v2(right, velTop),
@@ -518,20 +595,42 @@ proc pianoRollWindow*() =
     dl.addRectFilled(
       v2(x0, y + 1),
       v2(x1, y + st.view.rowH - 1),
-      if n.sel: rgb(shade, shade, shade div 3) else: rgb(shade div 2, shade, shade div 2),
+      if n.sel:
+        rgb(shade, shade, shade div 3)
+      else:
+        rgb(shade div 2, shade, shade div 2),
       2,
     )
-    dl.addRect(v2(x0, y + 1), v2(x1, y + st.view.rowH - 1), if n.sel: rgb(255, 255, 255) else: rgb(10, 30, 10), 2)
+    dl.addRect(
+      v2(x0, y + 1),
+      v2(x1, y + st.view.rowH - 1),
+      if n.sel:
+        rgb(255, 255, 255)
+      else:
+        rgb(10, 30, 10),
+      2,
+    )
     let name = noteName(n.pitch) # faded, only where the whole name fits inside the note
-    if st.view.rowH >= igGetTextLineHeight() and x1 - x0 >= igCalcTextSizeNonUDT(cstring(name)).x + 6:
-      dl.addText(v2(x0 + 3, y + (st.view.rowH - igGetTextLineHeight()) / 2), rgb(0, 0, 0, 120), cstring(name))
+    if st.view.rowH >= igGetTextLineHeight() and
+        x1 - x0 >= igCalcTextSizeNonUDT(cstring(name)).x + 6:
+      dl.addText(
+        v2(x0 + 3, y + (st.view.rowH - igGetTextLineHeight()) / 2),
+        rgb(0, 0, 0, 120),
+        cstring(name),
+      )
   let notes = focused().notes
   for i, a in notes: # same-pitch notes sounding together: red on the shared ticks only
-    for b in notes[i + 1 ..< notes.len]: # ponytail: O(n^2) pairs, sort by pitch if big clips lag
+    for b in notes[i + 1 ..< notes.len]:
+      # ponytail: O(n^2) pairs, sort by pitch if big clips lag
       let (s, e) = (max(a.start, b.start), min(a.start + a.len, b.start + b.len))
       if a.pitch == b.pitch and s < e:
         let y = pitchY(a.pitch)
-        dl.addRectFilled(v2(tickX(s.float), y + 1), v2(tickX(e.float), y + st.view.rowH - 1), rgb(255, 30, 30), 2)
+        dl.addRectFilled(
+          v2(tickX(s.float), y + 1),
+          v2(tickX(e.float), y + st.view.rowH - 1),
+          rgb(255, 30, 30),
+          2,
+        )
   if st.tool == Bend:
     # a point or segment is black where another note's bend wins the track's wheel there
     # ponytail: O(notes^2) per frame; fine for a clip's worth of notes
@@ -542,9 +641,21 @@ proc pianoRollWindow*() =
       let ks = n.bendIdx
       for j in 1 .. ks.high:
         let mid = n.start + (n.bendTick(ks[j - 1]) + n.bendTick(ks[j])) div 2
-        dl.addLine(bendXY(n, ks[j - 1]), bendXY(n, ks[j]), if loses(i, mid): rgb(0, 0, 0) else: rgb(255, 255, 255), 2)
+        dl.addLine(
+          bendXY(n, ks[j - 1]),
+          bendXY(n, ks[j]),
+          if loses(i, mid):
+            rgb(0, 0, 0)
+          else:
+            rgb(255, 255, 255),
+          2,
+        )
       for k in ks:
-        let c = if loses(i, n.start + min(n.bendTick(k), n.len - 1)): rgb(0, 0, 0) else: rgb(255, 255, 255)
+        let c =
+          if loses(i, n.start + min(n.bendTick(k), n.len - 1)):
+            rgb(0, 0, 0)
+          else:
+            rgb(255, 255, 255)
         if n.bend[k].sel:
           dl.addCircleFilled(bendXY(n, k), 5, rgb(255, 150, 30))
         dl.addCircle(bendXY(n, k), 5, c, 0, 2)
@@ -557,12 +668,20 @@ proc pianoRollWindow*() =
     if st.laneMode == Pan: # the centre
       let cy = bottom - float32(CcDefault[2]) / 127 * valH
       dl.addLine(v2(gridX, cy), v2(right, cy), rgb(255, 255, 255, 200), 3)
-    let pt = proc(p: tuple[t, v: int, sel: bool]): ImVec2 = v2(tickX(p.t.float), bottom - float32(p.v) / 127 * valH)
+    let pt = proc(p: tuple[t, v: int, sel: bool]): ImVec2 =
+      v2(tickX(p.t.float), bottom - float32(p.v) / 127 * valH)
     for i, p in pts:
       if i > 0:
         dl.addLine(pt(pts[i - 1]), pt(p), col, 2)
     for p in pts:
-      dl.addCircleFilled(pt(p), 4, if p.sel: rgb(255, 255, 85) else: col)
+      dl.addCircleFilled(
+        pt(p),
+        4,
+        if p.sel:
+          rgb(255, 255, 85)
+        else:
+          col,
+      )
     if st.tool == Select and velHeld and st.ptDrag == -1:
       st.ptBox.draw(st.view, dl, mouse)
     let last = pt(pts[^1]) # held to the loop point
@@ -571,13 +690,26 @@ proc pianoRollWindow*() =
   for n in (if st.laneMode == Vel: focused().notes else: @[]):
     let x0 = tickX(n.start.float)
     let vy = bottom - float32(n.vel) / 127 * valH
-    let c = if n.sel: rgb(255, 255, 85) else: rgb(110, 210, 110)
-    dl.addLine(v2(x0, vy), v2(tickX(float(n.start + n.len)), vy), (if n.sel: rgb(255, 255, 85, 90) else: rgb(110, 210, 110, 90)), 2)
+    let c =
+      if n.sel:
+        rgb(255, 255, 85)
+      else:
+        rgb(110, 210, 110)
+    dl.addLine(
+      v2(x0, vy),
+      v2(tickX(float(n.start + n.len)), vy),
+      (if n.sel: rgb(255, 255, 85, 90) else: rgb(110, 210, 110, 90)),
+      2,
+    )
     dl.addLine(v2(x0, bottom), v2(x0, vy), c, 2)
     dl.addCircleFilled(v2(x0, vy), 4, c)
 
   for c in playLines():
     dl.addLine(v2(tickX(c), origin.y), v2(tickX(c), bottom), rgb(255, 255, 255, 180))
   if song.songMode: # the clip's own position, where Ctrl+V pastes
-    dl.addLine(v2(tickX(song.clipPos), origin.y), v2(tickX(song.clipPos), bottom), rgb(255, 255, 255, 80))
+    dl.addLine(
+      v2(tickX(song.clipPos), origin.y),
+      v2(tickX(song.clipPos), bottom),
+      rgb(255, 255, 255, 80),
+    )
   dl.popClipRect()

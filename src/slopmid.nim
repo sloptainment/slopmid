@@ -7,14 +7,20 @@ proc transport() =
   let io = igGetIO()
   if igButton(if song.playing: "Pause" else: "Play", v2(60, 0)) or
       (igIsKeyPressed(ImGuiKey.Space, false) and not io.wantTextInput):
-    song.playing = (song.songMode or song.clips[song.clip].tracks.len > 0) and not song.playing
+    song.playing =
+      (song.songMode or song.clips[song.clip].tracks.len > 0) and not song.playing
   igSameLine()
-  if igButton("Stop", v2(60, 0)) and (song.songMode or song.clips[song.clip].tracks.len > 0):
+  if igButton("Stop", v2(60, 0)) and
+      (song.songMode or song.clips[song.clip].tracks.len > 0):
     song.playing = false
     song.pos = 0
   igSameLine()
   igPushStyleColor(
-    ImGuiCol.Button, if song.metronome: rgb(66, 150, 250) else: rgb(60, 60, 64)
+    ImGuiCol.Button,
+    if song.metronome:
+      rgb(66, 150, 250)
+    else:
+      rgb(60, 60, 64),
   )
   if igButton("Metronome"):
     song.metronome = not song.metronome
@@ -54,11 +60,24 @@ var
 proc ui() =
   let io = igGetIO()
   # File shortcuts work with the menu closed, but not under a popup or in a text field
-  let free = not io.wantTextInput and not igIsPopupOpen("", cast[ImGuiPopupFlags](ord(ImGuiPopupFlags.AnyPopupId) or ord(ImGuiPopupFlags.AnyPopupLevel)))
+  let free =
+    not io.wantTextInput and
+    not igIsPopupOpen(
+      "",
+      cast[ImGuiPopupFlags](ord(ImGuiPopupFlags.AnyPopupId) or
+        ord(ImGuiPopupFlags.AnyPopupLevel)),
+    )
   proc hot(k: ImGuiKey, shift = false): bool =
     free and io.keyCtrl and io.keyShift == shift and igIsKeyPressed(k, false)
-  var (hNew, hOpen, hSave, hSaveAs, hExport, hWav) =
-    (hot(ImGuiKey.N), hot(ImGuiKey.O), hot(ImGuiKey.S), hot(ImGuiKey.S, true), hot(ImGuiKey.E), false)
+
+  var (hNew, hOpen, hSave, hSaveAs, hExport, hWav) = (
+    hot(ImGuiKey.N),
+    hot(ImGuiKey.O),
+    hot(ImGuiKey.S),
+    hot(ImGuiKey.S, true),
+    hot(ImGuiKey.E),
+    false,
+  )
   if igBeginMainMenuBar():
     if igBeginMenu("File"):
       hNew = igMenuItem("New", "Ctrl+N") or hNew
@@ -71,7 +90,8 @@ proc ui() =
       if igMenuItem("Exit"):
         confirm ExitApp
       igEndMenu()
-    if igBeginMenu("Edit"): # acts on the piano roll or song window, whichever you used last
+    if igBeginMenu("Edit"):
+      # acts on the piano roll or song window, whichever you used last
       for (c, name, keys) in [
         (Undo, "Undo", "Ctrl+Z"),
         (Redo, "Redo", "Ctrl+Shift+Z"),
@@ -132,7 +152,9 @@ proc ui() =
     igEnd()
   if showSong:
     # the lane widgets overhang the pane at the edges; scrolling is ours
-    if igBegin("Song", nil, ImGuiWindowFlags.NoScrollbar or ImGuiWindowFlags.NoScrollWithMouse):
+    if igBegin(
+      "Song", nil, ImGuiWindowFlags.NoScrollbar or ImGuiWindowFlags.NoScrollWithMouse
+    ):
       songWindow()
     igEnd()
   fileDialogs()

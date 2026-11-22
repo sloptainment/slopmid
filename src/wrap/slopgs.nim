@@ -4,7 +4,8 @@
 ## not thread-safe per instance: the caller serializes every call on one.
 import std/strutils
 
-const here = currentSourcePath.replace("\\", "/").rsplit('/', 1)[0] # `/` even for a Windows target on a Linux host
+const here = currentSourcePath.replace("\\", "/").rsplit('/', 1)[0]
+  # `/` even for a Windows target on a Linux host
 const engine = here & "/../../deps/slopgs/src/engine"
 {.passC: "-I" & engine.}
 {.compile(engine & "/dls.c", "-x c -std=c11").}

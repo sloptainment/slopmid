@@ -117,16 +117,21 @@ proc moveBendPts*(notes: var seq[Note], gi, gk, dt: int, dv: float) =
     dt = 0
   template inGroup(i, k: int): bool =
     (i == gi and k == gk) or (notes[i].bendVisible(k) and notes[i].bend[k].sel)
+
   for i, n in notes:
     for k in n.bendIdx:
       if inGroup(i, k):
         dv = clamp(dv, -BendRange.float - n.bend[k].v, BendRange.float - n.bend[k].v)
         if k > 0 and k < n.bend.high:
           let t = n.bend[k].t
-          if k > 1 and not inGroup(i, k - 1): dt = max(dt, n.bend[k - 1].t + 1 - t)
-          if k == n.bend.high - 1: dt = min(dt, n.len - 1 - t)
-          elif not inGroup(i, k + 1): dt = min(dt, min(n.bend[k + 1].t, n.len) - 1 - t)
-          if k == 1: dt = max(dt, 1 - t)
+          if k > 1 and not inGroup(i, k - 1):
+            dt = max(dt, n.bend[k - 1].t + 1 - t)
+          if k == n.bend.high - 1:
+            dt = min(dt, n.len - 1 - t)
+          elif not inGroup(i, k + 1):
+            dt = min(dt, min(n.bend[k + 1].t, n.len) - 1 - t)
+          if k == 1:
+            dt = max(dt, 1 - t)
   for i, n in notes.mpairs:
     for k in n.bendIdx:
       if inGroup(i, k):
@@ -166,15 +171,21 @@ proc pasteCurve*(pts: var seq[CurvePt], clip: seq[CurvePt], at, loopT: int) =
       p.sel = false
     pts = (pts & moved).sortedByIt(it.t)
 
-proc moveCurvePts*(pts: var seq[CurvePt], grabbed: int, group: bool, dt, dv, loopT: int) =
+proc moveCurvePts*(
+    pts: var seq[CurvePt], grabbed: int, group: bool, dt, dv, loopT: int
+) =
   ## Moves point `grabbed`, and with `group` the selected points too, by `dt` ticks and `dv` values.
   ## The group stops at its neighbours and at 0 .. `loopT` ticks and 0 .. 127, keeping its shape.
   var (dt, dv) = (dt, dv)
-  template inGroup(i: int): bool = i == grabbed or (group and pts[i].sel)
+  template inGroup(i: int): bool =
+    i == grabbed or (group and pts[i].sel)
+
   for i, p in pts:
     if inGroup(i):
-      if i > 0 and not inGroup(i - 1): dt = max(dt, pts[i - 1].t + 1 - p.t)
-      if i < pts.high and not inGroup(i + 1): dt = min(dt, pts[i + 1].t - 1 - p.t)
+      if i > 0 and not inGroup(i - 1):
+        dt = max(dt, pts[i - 1].t + 1 - p.t)
+      if i < pts.high and not inGroup(i + 1):
+        dt = min(dt, pts[i + 1].t - 1 - p.t)
       dt = clamp(dt, -p.t, max(0, loopT - p.t))
       dv = clamp(dv, -p.v, 127 - p.v)
   for i in 0 .. pts.high:
@@ -188,18 +199,29 @@ proc fits*(ps: seq[Placement], i: int, p: Placement): bool =
   ## `p` could replace placement `i` (-1: be added): in bounds and clear of its lane's others.
   result = p.len > 0 and p.start >= 0 and p.lane in 0 ..< Lanes
   for j, q in ps:
-    if j != i and q.lane == p.lane and q.start < p.start + p.len and p.start < q.start + q.len:
+    if j != i and q.lane == p.lane and q.start < p.start + p.len and
+        p.start < q.start + q.len:
       result = false
 
 proc moves*(ps: seq[Placement], grabbed: int, mode: PDrag, i: int): bool =
   ## Placement `i` is dragged with the mouse: the grabbed one, or its whole selection. A left trim is the grabbed one only.
   mode in {PMove, PTrimL, PTrimR} and
-    (if mode != PTrimL and ps[grabbed].sel: ps[i].sel else: i == grabbed)
+    (if mode != PTrimL and ps[grabbed].sel: ps[i].sel
+    else: i == grabbed)
 
 proc pastePlacements*(s: var Song, clip: seq[Placement], at: int) =
   ## `clip` as the new selection, its first placement starting at `at`. All or nothing: an overlap anywhere cancels it.
   let d = at - clip.mapIt(it.start).min
-  let moved = clip.mapIt(Placement(clip: it.clip, lane: it.lane, start: it.start + d, len: it.len, offset: it.offset, sel: true))
+  let moved = clip.mapIt(
+    Placement(
+      clip: it.clip,
+      lane: it.lane,
+      start: it.start + d,
+      len: it.len,
+      offset: it.offset,
+      sel: true,
+    )
+  )
   if moved.allIt(s.placements.fits(-1, it)):
     for p in s.placements.mitems:
       p.sel = false
@@ -222,7 +244,9 @@ proc addPlacement*(s: var Song, lane, tick, grid: int): int =
   result = -1
   for q in s.placements.mitems:
     q.sel = false
-  var p = Placement(clip: s.clip, lane: lane, start: snapDown(tick, grid), len: s.clips[s.clip].loopEnd)
+  var p = Placement(
+    clip: s.clip, lane: lane, start: snapDown(tick, grid), len: s.clips[s.clip].loopEnd
+  )
   for q in s.placements:
     if q.lane == lane and q.start >= p.start:
       p.len = min(p.len, q.start - p.start)
@@ -230,7 +254,13 @@ proc addPlacement*(s: var Song, lane, tick, grid: int): int =
     s.placements.add p
     result = s.placements.high
 
-proc dragPlacements*(s: var Song, orig: seq[Placement], grabbed: int, mode: PDrag, tick, lane, grab, grid: int): bool =
+proc dragPlacements*(
+    s: var Song,
+    orig: seq[Placement],
+    grabbed: int,
+    mode: PDrag,
+    tick, lane, grab, grid: int,
+): bool =
   ## Drags from `orig`, the placements when the drag began, so nothing sticks to an overlap passed on the way.
   ## The mouse is at `tick` in `lane`, `grab` ticks into the grabbed placement `grabbed`. A move stops at the edges;
   ## a right trim changes all lengths by the same ticks; a left trim moves its edge and starts the clip part-way in.
@@ -317,14 +347,18 @@ proc boxSelect*[T](xs: var seq[T], shift: bool, inBox: proc(x: T): bool) =
 when isMainModule:
   proc nt(start, len, pitch: int, sel = false): Note =
     Note(start: start, len: len, pitch: pitch, sel: sel)
+
   proc pl(clip, lane, start, len: int, sel = false): Placement =
     Placement(clip: clip, lane: lane, start: start, len: len, sel: sel)
-  proc starts(ns: seq[Note]): seq[int] = ns.mapIt(it.start)
+
+  proc starts(ns: seq[Note]): seq[int] =
+    ns.mapIt(it.start)
 
   # duplicate: after the last selected note, the copies selected; a fine snap goes on to the bar when a sliver is left
   var ns = @[nt(0, 96, 60, true), nt(96, 96, 62, true), nt(200, 10, 64)]
   ns.duplicate(Ppq div 4)
-  doAssert ns.starts == @[0, 96, 200, 192, 288] and ns.mapIt(it.sel) == @[false, false, false, true, true]
+  doAssert ns.starts == @[0, 96, 200, 192, 288] and
+    ns.mapIt(it.sel) == @[false, false, false, true, true]
   ns = @[nt(0, BarTicks - 4, 60, true)]
   ns.duplicate(Ppq div 24)
   doAssert ns.starts == @[0, BarTicks]
@@ -384,7 +418,8 @@ when isMainModule:
   ns = @[nt(0, 96, 60)]
   ns[0].bend = @[(0, 0.0, false), (24, 1.0, true), (48, 2.0, true), (0, 0.0, false)]
   ns.moveBendPts(0, 1, 100, 100.0)
-  doAssert ns[0].bend.mapIt(it.t)[1 .. 2] == @[71, 95] and ns[0].bend[1].v == BendRange.float - 1
+  doAssert ns[0].bend.mapIt(it.t)[1 .. 2] == @[71, 95] and
+    ns[0].bend[1].v == BendRange.float - 1
   ns.moveBendPts(0, 1, -100, 0.0)
   doAssert ns[0].bend.mapIt(it.t)[1 .. 2] == @[1, 25]
   ns = @[nt(0, 96, 60)]
@@ -407,13 +442,17 @@ when isMainModule:
   # pasteCurve: replaces exactly the covered span (ends included), the paste is the selection, points past the loop are dropped
   cp = @[(0, 1, true), (10, 2, false), (20, 3, false), (30, 4, false), (40, 5, false)]
   cp.pasteCurve(@[(5, 70, true), (15, 80, true)], 20, 100)
-  doAssert cp.mapIt(it.t) == @[0, 10, 20, 30, 40] and cp.mapIt(it.v) == @[1, 2, 70, 80, 5] and cp.mapIt(it.sel) == @[false, false, true, true, false]
+  doAssert cp.mapIt(it.t) == @[0, 10, 20, 30, 40] and
+    cp.mapIt(it.v) == @[1, 2, 70, 80, 5] and
+    cp.mapIt(it.sel) == @[false, false, true, true, false]
   cp.pasteCurve(@[(0, 1, true), (50, 2, true)], 0, 30) # the second lands past the loop
-  doAssert cp.mapIt(it.v) == @[1, 2, 70, 80, 5] and cp[0].sel and cp.mapIt(it.t) == @[0, 10, 20, 30, 40]
+  doAssert cp.mapIt(it.v) == @[1, 2, 70, 80, 5] and cp[0].sel and
+    cp.mapIt(it.t) == @[0, 10, 20, 30, 40]
 
   # moveCurvePts: the group stops at its neighbours / 0 / loopT, keeping its shape
   cp = @[(0, 5, false), (10, 100, true), (20, 120, true), (30, 50, false)]
-  cp.moveCurvePts(1, true, 100, 100, 200) # stops 1 tick short of the neighbour at 30, and at 127
+  cp.moveCurvePts(1, true, 100, 100, 200)
+    # stops 1 tick short of the neighbour at 30, and at 127
   doAssert cp.mapIt(it.t) == @[0, 19, 29, 30] and cp.mapIt(it.v) == @[5, 107, 127, 50]
   cp = @[(0, 5, false), (10, 100, true), (20, 120, true), (30, 50, false)]
   cp.moveCurvePts(1, true, -100, 100, 200)
@@ -426,58 +465,86 @@ when isMainModule:
   let ps = @[pl(0, 1, 0, 100), pl(0, 2, 0, 100)]
   doAssert ps.fits(-1, pl(0, 1, 100, 50)) and not ps.fits(-1, pl(0, 1, 99, 50))
   doAssert ps.fits(0, pl(0, 1, 50, 100)) and ps.fits(-1, pl(0, 3, 0, 100))
-  doAssert not ps.fits(-1, pl(0, 3, -1, 5)) and not ps.fits(-1, pl(0, Lanes, 0, 5)) and not ps.fits(-1, pl(0, 3, 0, 0))
+  doAssert not ps.fits(-1, pl(0, 3, -1, 5)) and not ps.fits(-1, pl(0, Lanes, 0, 5)) and
+    not ps.fits(-1, pl(0, 3, 0, 0))
 
   # moves: the group for a move/right trim, the grabbed one only for a left trim
   let gp = @[pl(0, 0, 0, 10, true), pl(0, 1, 0, 10, true), pl(0, 2, 0, 10)]
-  doAssert gp.moves(0, PMove, 1) and not gp.moves(0, PMove, 2) and not gp.moves(0, PTrimL, 1) and gp.moves(2, PMove, 2)
+  doAssert gp.moves(0, PMove, 1) and not gp.moves(0, PMove, 2) and
+    not gp.moves(0, PTrimL, 1) and gp.moves(2, PMove, 2)
   doAssert not gp.moves(0, PIdle, 0)
 
   # pastePlacements: all or nothing
-  var sg = Song(clips: @[Clip(), Clip()], placements: @[pl(0, 0, 0, 100, true), pl(1, 1, 500, 100)])
+  var sg = Song(
+    clips: @[Clip(), Clip()], placements: @[pl(0, 0, 0, 100, true), pl(1, 1, 500, 100)]
+  )
   sg.pastePlacements(@[pl(0, 0, 10, 50, true), pl(0, 2, 20, 50, true)], 200)
-  doAssert sg.placements.len == 4 and sg.placements[2].start == 200 and sg.placements[3].start == 210 and not sg.placements[0].sel
-  sg.pastePlacements(@[pl(0, 0, 0, 50, true), pl(0, 1, 0, 50, true)], 480) # the second hits (1, 500)
+  doAssert sg.placements.len == 4 and sg.placements[2].start == 200 and
+    sg.placements[3].start == 210 and not sg.placements[0].sel
+  sg.pastePlacements(@[pl(0, 0, 0, 50, true), pl(0, 1, 0, 50, true)], 480)
+    # the second hits (1, 500)
   doAssert sg.placements.len == 4 and sg.placements[2].sel
 
   # quantizePlacements: rounds, at least a snap long, skips one that would overlap
-  sg = Song(clips: @[Clip()], placements: @[pl(0, 0, 10, 3, true), pl(0, 1, 20, 100, true), pl(0, 1, 130, 20)])
+  sg = Song(
+    clips: @[Clip()],
+    placements: @[pl(0, 0, 10, 3, true), pl(0, 1, 20, 100, true), pl(0, 1, 130, 20)],
+  )
   sg.quantizePlacements(24)
   doAssert sg.placements[0].start == 0 and sg.placements[0].len == 24
-  doAssert sg.placements[1].start == 24 and sg.placements[1].len == 96 # 20..120 -> 24..120
+  doAssert sg.placements[1].start == 24 and sg.placements[1].len == 96
+    # 20..120 -> 24..120
   sg = Song(clips: @[Clip()], placements: @[pl(0, 0, 0, 100), pl(0, 0, 110, 30, true)])
   sg.quantizePlacements(48) # 110..140 -> 96..144, overlaps the first
   doAssert sg.placements[1].start == 110 and sg.placements[1].len == 30
 
   # addPlacement: gap-clamped, -1 when it can't fit, deselects regardless
-  sg = Song(clips: @[Clip(tracks: @[Track(notes: @[Note(start: 0, len: 8)])])], placements: @[pl(0, 0, 300, 50, true), pl(0, 1, 0, 700)])
-  doAssert sg.addPlacement(0, 100, 24) == 2 and sg.placements[2].start == 96 and sg.placements[2].len == 204 and not sg.placements[0].sel
+  sg = Song(
+    clips: @[Clip(tracks: @[Track(notes: @[Note(start: 0, len: 8)])])],
+    placements: @[pl(0, 0, 300, 50, true), pl(0, 1, 0, 700)],
+  )
+  doAssert sg.addPlacement(0, 100, 24) == 2 and sg.placements[2].start == 96 and
+    sg.placements[2].len == 204 and not sg.placements[0].sel
   doAssert sg.addPlacement(0, 310, 24) == -1 and sg.placements.len == 3 # inside one
   doAssert sg.addPlacement(2, 10, 24) == 3 and sg.placements[3].len == BarTicks
 
   # dragPlacements: a move keeps the shape and stops at the edges, reports an overlap; trims
-  sg = Song(clips: @[Clip(tracks: @[Track(notes: @[Note(start: 0, len: 8)])])],
-            placements: @[pl(0, 0, 50, 100, true), pl(0, 1, 120, 100, true), pl(0, 2, 0, 100)])
+  sg = Song(
+    clips: @[Clip(tracks: @[Track(notes: @[Note(start: 0, len: 8)])])],
+    placements: @[pl(0, 0, 50, 100, true), pl(0, 1, 120, 100, true), pl(0, 2, 0, 100)],
+  )
   let o = sg.placements
-  doAssert not sg.dragPlacements(o, 0, PMove, 0, 5, 0, 24) # to tick 0: the group stops where the first reaches 0
-  doAssert sg.placements.mapIt((it.start, it.lane)) == @[(0, 5), (70, 6), (0, 2)] # the unselected one stays
+  doAssert not sg.dragPlacements(o, 0, PMove, 0, 5, 0, 24)
+    # to tick 0: the group stops where the first reaches 0
+  doAssert sg.placements.mapIt((it.start, it.lane)) ==
+    @[(0, 5), (70, 6), (0, 2)] # the unselected one stays
   sg.placements = o
-  doAssert not sg.dragPlacements(o, 0, PMove, 50, 31, 0, 24) # to lane 31: the group stops where the second reaches it
+  doAssert not sg.dragPlacements(o, 0, PMove, 50, 31, 0, 24)
+    # to lane 31: the group stops where the second reaches it
   doAssert sg.placements.mapIt(it.lane) == @[30, 31, 2]
   sg.placements = o
-  doAssert sg.dragPlacements(o, 0, PMove, 50, 2, 0, 24) # lane 0 -> 2: collides with the unselected one
+  doAssert sg.dragPlacements(o, 0, PMove, 50, 2, 0, 24)
+    # lane 0 -> 2: collides with the unselected one
   doAssert sg.placements[0].lane == 2 and sg.placements[1].lane == 3
   sg.placements = o
-  doAssert not sg.dragPlacements(o, 0, PTrimR, 250, 0, 0, 24) # right edge 150 -> 240: all grow by 90
-  doAssert sg.placements.mapIt(it.len)[0 .. 1] == @[190, 190] and sg.placements[0].lane == 0
+  doAssert not sg.dragPlacements(o, 0, PTrimR, 250, 0, 0, 24)
+    # right edge 150 -> 240: all grow by 90
+  doAssert sg.placements.mapIt(it.len)[0 .. 1] == @[190, 190] and
+    sg.placements[0].lane == 0
   doAssert not sg.dragPlacements(o, 0, PTrimR, 0, 0, 0, 24) # shrinks only to one snap
   doAssert sg.placements.mapIt(it.len)[0 .. 1] == @[24, 24]
   sg.placements = o
-  doAssert not sg.dragPlacements(o, 1, PTrimL, 168, 0, 0, 24) # left trim: the grabbed one only, the clip starts part-way in
-  doAssert sg.placements[1].start == 168 and sg.placements[1].len == 52 and sg.placements[1].offset == 48 and sg.placements[0] == o[0]
+  doAssert not sg.dragPlacements(o, 1, PTrimL, 168, 0, 0, 24)
+    # left trim: the grabbed one only, the clip starts part-way in
+  doAssert sg.placements[1].start == 168 and sg.placements[1].len == 52 and
+    sg.placements[1].offset == 48 and sg.placements[0] == o[0]
 
   # removeClip: its placements go, later clips renumber, the playing clip stays in range
-  sg = Song(clips: @[Clip(), Clip(), Clip()], clip: 2, placements: @[pl(0, 0, 0, 10), pl(1, 0, 20, 10), pl(2, 0, 40, 10)])
+  sg = Song(
+    clips: @[Clip(), Clip(), Clip()],
+    clip: 2,
+    placements: @[pl(0, 0, 0, 10), pl(1, 0, 20, 10), pl(2, 0, 40, 10)],
+  )
   sg.removeClip(1)
   doAssert sg.clips.len == 2 and sg.placements.mapIt(it.clip) == @[0, 1] and sg.clip == 1
   sg.removeClip(1)
@@ -486,7 +553,8 @@ when isMainModule:
   # duplicateClip: a copy at the end, name included, unmuted
   sg = Song(clips: @[Clip(name: "a", tracks: @[Track(mute: true, solo: true)])])
   sg.duplicateClip(0)
-  doAssert sg.clips.len == 2 and sg.clips[1].name == "a" and not sg.clips[1].tracks[0].mute and not sg.clips[1].tracks[0].solo
+  doAssert sg.clips.len == 2 and sg.clips[1].name == "a" and
+    not sg.clips[1].tracks[0].mute and not sg.clips[1].tracks[0].solo
   doAssert sg.clips[0].tracks[0].mute
 
   # toggleAll: all, or none if any is selected
@@ -508,11 +576,23 @@ when isMainModule:
   doAssert sn.mapIt(it.sel) == @[false, false, true]
   # boxSelect: touched ones selected; the rest deselected unless Shift
   sn = @[nt(0, 1, 60, true), nt(0, 1, 61), nt(0, 1, 62)]
-  sn.boxSelect(true, proc(n: Note): bool = n.pitch == 61)
+  sn.boxSelect(
+    true,
+    proc(n: Note): bool =
+      n.pitch == 61,
+  )
   doAssert sn.mapIt(it.sel) == @[true, true, false]
-  sn.boxSelect(false, proc(n: Note): bool = n.pitch == 62)
+  sn.boxSelect(
+    false,
+    proc(n: Note): bool =
+      n.pitch == 62,
+  )
   doAssert sn.mapIt(it.sel) == @[false, false, true]
   var cpts: seq[CurvePt] = @[(0, 1, true), (10, 2, false)] # curve points too
-  cpts.boxSelect(false, proc(p: CurvePt): bool = p.t == 10)
+  cpts.boxSelect(
+    false,
+    proc(p: CurvePt): bool =
+      p.t == 10,
+  )
   doAssert cpts.mapIt(it.sel) == @[false, true]
   echo "edit: ok"

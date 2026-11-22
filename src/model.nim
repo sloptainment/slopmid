@@ -12,22 +12,26 @@ const
   CcDefault* = [100, 127, 64] ## a track's value with no points; the GM defaults
   BendRange* = 24 ## semitones either way, sent to each channel as RPN 0
   BendMid* = 8192 ## pitch bend wheel centre
-  CcSteps* = [Ppq div 4, Ppq div 8, Ppq div 16, Ppq div 24] ## ticks between messages: 1/16, 1/32, 1/64, 1/96
+  CcSteps* = [Ppq div 4, Ppq div 8, Ppq div 16, Ppq div 24]
+    ## ticks between messages: 1/16, 1/32, 1/64, 1/96
 
 type
-  CurvePt* = tuple[t, v: int, sel: bool] ## a curve point: tick, value, selected in the editor
+  CurvePt* = tuple[t, v: int, sel: bool]
+    ## a curve point: tick, value, selected in the editor
   BendPt* = tuple[t: int, v: float, sel: bool] ## a bend point: see `Note.bend`
 
   Note* = object
     start*, len*: int ## ticks
     pitch*, vel*: int
     sel*: bool ## selected in the piano roll
-    bend*: seq[BendPt] ## pitch bend: points ramped between, `v` in semitones from the note, `sel` is the editor's selection. Empty = flat; else the first point is the note's start and the last its end (their `t` unused), the rest sorted by `t` ticks into the note, those at or past the end ignored
+    bend*: seq[BendPt]
+      ## pitch bend: points ramped between, `v` in semitones from the note, `sel` is the editor's selection. Empty = flat; else the first point is the note's start and the last its end (their `t` unused), the rest sorted by `t` ticks into the note, those at or past the end ignored
 
   Track* = object
     notes*: seq[Note]
     bank*, program*: int
-    cc*: array[3, seq[CurvePt]] ## per curve (`CcNum`): points by tick, ramped between; held outside the first and last; `sel` is the editor's selection
+    cc*: array[3, seq[CurvePt]]
+      ## per curve (`CcNum`): points by tick, ramped between; held outside the first and last; `sel` is the editor's selection
     ccRes*: int = 3 ## index into `CcSteps`; default 1/96
     rhythm*: bool ## plays on the drum channel
     mute*, solo*: bool ## transient, cleared when the clip changes
@@ -38,7 +42,8 @@ type
 
   Placement* = object ## a clip placed in the song window
     clip*, lane*: int
-    start*, len*, offset*: int ## ticks; `offset`: where in the clip it starts; past its loop end it repeats
+    start*, len*, offset*: int
+      ## ticks; `offset`: where in the clip it starts; past its loop end it repeats
     sel*: bool ## selected in the song window
 
   Song* = object
@@ -92,7 +97,12 @@ proc bendIdx*(n: Note): seq[int] =
 
 proc bendTick*(n: Note, k: int): int =
   ## Point `k`, in ticks into the note.
-  if k == 0: 0 elif k == n.bend.high: n.len else: n.bend[k].t
+  if k == 0:
+    0
+  elif k == n.bend.high:
+    n.len
+  else:
+    n.bend[k].t
 
 proc bendPts*(n: Note): seq[tuple[t: int, v: float]] =
   ## The points in play as (ticks into the note, semitones); a flat line without any.
@@ -107,7 +117,9 @@ proc bendOff*(n: Note, tick: int): float =
   let t = tick - n.start
   for i in 1 .. pts.high:
     if t <= pts[i].t:
-      return pts[i - 1].v + (pts[i].v - pts[i - 1].v) * ((t - pts[i - 1].t) / (pts[i].t - pts[i - 1].t))
+      return
+        pts[i - 1].v +
+        (pts[i].v - pts[i - 1].v) * ((t - pts[i - 1].t) / (pts[i].t - pts[i - 1].t))
   pts[^1].v
 
 proc bendRaw(off: float): int =
@@ -124,8 +136,10 @@ proc bendWinner*(t: Track, tick: int): int =
 proc bendAt*(t: Track, tick: int): int =
   ## The wheel at `tick`, 0 .. 16383.
   let w = t.bendWinner(tick)
-  if w < 0: BendMid else: t.notes[w].bendOff(tick).bendRaw
-
+  if w < 0:
+    BendMid
+  else:
+    t.notes[w].bendOff(tick).bendRaw
 
 proc pos*(s: var Song): var float =
   ## The playhead of the mode that plays.
@@ -147,7 +161,8 @@ proc songEnd*(s: Song): int =
 
 when isMainModule:
   doAssert snap(47, 24) == 48 and snap(-13, 24) == -24 and snapDown(47, 24) == 24
-  doAssert Clip(tracks: @[Track(notes: @[Note(start: 380, len: 8)])]).loopEnd == 2 * BarTicks
+  doAssert Clip(tracks: @[Track(notes: @[Note(start: 380, len: 8)])]).loopEnd ==
+    2 * BarTicks
   # `pos` is the playhead of the mode that plays, and assigns through
   var s = Song(clipPos: 1, songPos: 5)
   doAssert s.pos == 1
@@ -157,18 +172,26 @@ when isMainModule:
   doAssert s.songPos == 7 and s.clipPos == 1
   # volume: ramps 0 -> 127 over the first beat, held after
   let ramp = Track(ccRes: 0, cc: [@[(0, 0, false), (96, 127, false)], @[], @[]])
-  doAssert (ramp.ccAt(0, 0), ramp.ccAt(0, 48), ramp.ccAt(0, 96), ramp.ccAt(0, 500)) == (0, 64, 127, 127)
+  doAssert (ramp.ccAt(0, 0), ramp.ccAt(0, 48), ramp.ccAt(0, 96), ramp.ccAt(0, 500)) ==
+    (0, 64, 127, 127)
   # pan is centred (64) by default
   doAssert Track().ccAt(2, 0) == 64
   # one wheel per track: the latest start with a bend wins, a flat note never does
-  let bw = Track(notes: @[
-    Note(start: 0, len: Ppq, bend: @[(0, 0.0, false), (0, 12.0, false)]),
-    Note(start: 48, len: Ppq),
-    Note(start: 48, len: Ppq, bend: @[(0, 6.0, false), (0, 6.0, false)]),
-  ])
-  doAssert (bw.bendWinner(20), bw.bendWinner(60), bw.bendWinner(120), bw.bendWinner(200)) == (0, 2, 2, -1)
+  let bw = Track(
+    notes: @[
+      Note(start: 0, len: Ppq, bend: @[(0, 0.0, false), (0, 12.0, false)]),
+      Note(start: 48, len: Ppq),
+      Note(start: 48, len: Ppq, bend: @[(0, 6.0, false), (0, 6.0, false)]),
+    ]
+  )
+  doAssert (
+    bw.bendWinner(20), bw.bendWinner(60), bw.bendWinner(120), bw.bendWinner(200)
+  ) == (0, 2, 2, -1)
   doAssert (bw.bendAt(60), bw.bendAt(200)) == (8192 + 2048, 8192)
   # a middle point past the note's end is ignored; the ramp passes through the others
-  let bm = Note(len: 48, bend: @[(0, 0.0, false), (24, 4.0, false), (60, 9.0, false), (0, 0.0, false)])
+  let bm = Note(
+    len: 48,
+    bend: @[(0, 0.0, false), (24, 4.0, false), (60, 9.0, false), (0, 0.0, false)],
+  )
   doAssert (bm.bendOff(12), bm.bendOff(24), bm.bendOff(36)) == (2.0, 4.0, 2.0)
   echo "model: ok"

@@ -6,7 +6,8 @@ import imgui
 
 # imgui's SDL2 and SDL_Renderer backends are built here; the imgui package has no
 # binding for them. imgui.nim's passC supplies the cimgui include dir, config.nims SDL's.
-const here = currentSourcePath.replace("\\", "/").rsplit('/', 1)[0] # `/` even for a Windows target on a Linux host
+const here = currentSourcePath.replace("\\", "/").rsplit('/', 1)[0]
+  # `/` even for a Windows target on a Linux host
 const be = here & "/../../deps/imgui/src/imgui/private/cimgui/imgui/backends"
 {.passC: "-I" & be & """ -DIMGUI_IMPL_API="extern \"C\" " """.}
 {.compile: be & "/imgui_impl_sdl2.cpp".}
@@ -34,9 +35,7 @@ proc ImGui_ImplSDL2_ProcessEvent(event: pointer): bool {.importc, cdecl, discard
 proc ImGui_ImplSDL2_NewFrame() {.importc, cdecl.}
 proc ImGui_ImplSDLRenderer2_Init(renderer: pointer): bool {.importc, cdecl.}
 proc ImGui_ImplSDLRenderer2_NewFrame() {.importc, cdecl.}
-proc ImGui_ImplSDLRenderer2_RenderDrawData(
-  data, renderer: pointer
-) {.importc, cdecl.}
+proc ImGui_ImplSDLRenderer2_RenderDrawData(data, renderer: pointer) {.importc, cdecl.}
 
 const
   SdlInitVideo = 0x20'u32
@@ -56,7 +55,8 @@ var
 proc open*(title: string, w, h: int) =
   doAssert SDL_Init(SdlInitVideo) == 0
   window = SDL_CreateWindow(
-    title, SdlWindowposCentered, SdlWindowposCentered, w.cint, h.cint, SdlWindowResizable
+    title, SdlWindowposCentered, SdlWindowposCentered, w.cint, h.cint,
+    SdlWindowResizable,
   )
   doAssert window != nil
   renderer = SDL_CreateRenderer(window, -1, SdlRendererPresentVsync)

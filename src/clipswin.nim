@@ -34,7 +34,11 @@ proc clipsWindow*() =
   igSameLine()
   igSetNextItemWidth(-1)
   var buf: array[64, char]
-  copyMem(addr buf[0], cstring(song.clips[song.clip].name), min(song.clips[song.clip].name.len, 63))
+  copyMem(
+    addr buf[0],
+    cstring(song.clips[song.clip].name),
+    min(song.clips[song.clip].name.len, 63),
+  )
   if igInputText("##name", cast[cstring](addr buf[0]), buf.len.uint):
     song.clips[song.clip].name = $cast[cstring](addr buf[0])
   igSeparator()
@@ -89,7 +93,9 @@ proc clipsWindow*() =
         ),
       ):
         for q, name in GmNames:
-          if igSelectable(cstring(&"{t.bank:03}:{q:03} {name}"), not t.rhythm and q == t.program):
+          if igSelectable(
+            cstring(&"{t.bank:03}:{q:03} {name}"), not t.rhythm and q == t.program
+          ):
             t.program = q
             t.rhythm = false
         if igSelectable("Rhythm", t.rhythm):

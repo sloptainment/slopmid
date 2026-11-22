@@ -2,12 +2,12 @@
 import imgui
 import model, common
 
-type Snapshot = object ## what undo restores; selection and mute/solo cleared, so they don't count as edits
+type Snapshot = object
+  ## what undo restores; selection and mute/solo cleared, so they don't count as edits
   clips: seq[Clip]
   placements: seq[Placement]
 
-var
-  undoStack, redoStack: seq[Snapshot]
+var undoStack, redoStack: seq[Snapshot]
 
 proc `==`*(a, b: Snapshot): bool =
   a.clips == b.clips and a.placements == b.placements
@@ -36,7 +36,8 @@ proc restore(s: Snapshot) =
   song.clips = s.clips
   song.placements = s.placements
   song.clip = min(song.clip, song.clips.high)
-  for i in 0 ..< min(old.len, song.clips[song.clip].tracks.len): # mute/solo aren't undone
+  for i in 0 ..< min(old.len, song.clips[song.clip].tracks.len):
+    # mute/solo aren't undone
     song.clips[song.clip].tracks[i].mute = old[i].mute
     song.clips[song.clip].tracks[i].solo = old[i].solo
   if focusTrack >= song.clips[song.clip].tracks.len:
@@ -53,7 +54,8 @@ proc resetHistory*() =
 proc history*() =
   ## Once no mouse button or text field is busy: an edit since the last commit becomes an undo step; then handle undo/redo.
   let io = igGetIO()
-  if igIsMouseDown(ImGuiMouseButton.Left) or igIsMouseDown(ImGuiMouseButton.Right) or io.wantTextInput:
+  if igIsMouseDown(ImGuiMouseButton.Left) or igIsMouseDown(ImGuiMouseButton.Right) or
+      io.wantTextInput:
     return
   let now = capture()
   if now != committed:
@@ -61,7 +63,9 @@ proc history*() =
     redoStack.setLen 0
     committed = now
   let z = io.keyCtrl and igIsKeyPressed(ImGuiKey.Z, false)
-  let redo = menuCmd == Redo or (io.keyCtrl and igIsKeyPressed(ImGuiKey.Y, false)) or (z and io.keyShift)
+  let redo =
+    menuCmd == Redo or (io.keyCtrl and igIsKeyPressed(ImGuiKey.Y, false)) or
+    (z and io.keyShift)
   let undo = menuCmd == Undo or (z and not io.keyShift)
   if redo and redoStack.len > 0:
     undoStack.add committed
